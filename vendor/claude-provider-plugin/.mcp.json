@@ -1,0 +1,8 @@
+{
+  "mcpServers": {
+    "provider": {
+      "command": "npx",
+      "args": ["-y", "claude-provider", "mcp"]
+    }
+  }
+}
