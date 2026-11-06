@@ -1,0 +1,507 @@
+# =============================================================================
+#  J.A.R.V.I.S. - free, local AI voice assistant
+#  Board: Guition JC1060P470C_I_W_Y (7" 1024x600, ESP32-P4 + ESP32-C6)
+#
+#  Wake word "Hey Jarvis" runs ON the device (micro_wake_word).
+#  Speech-to-text, the AI "brain" and text-to-speech run in Home Assistant
+#  (Whisper + Ollama/Gemini + Piper) - see README.md in this folder.
+#
+#  Hardware base taken from the community config:
+#  https://github.com/p1ngb4ck/unofficial_guition_esp32p4_repo/tree/main/JC1060P470_I_W_Y
+# =============================================================================
+
+substitutions:
+  name: jarvis
+  friendly_name: Jarvis
+  timezone: Asia/Muscat
+  # Colours (hex, no #)
+  c_core: "00E5FF"      # idle cyan
+  c_listen: "00FF9C"    # listening green
+  c_think: "FFB300"     # thinking amber
+  c_speak: "2979FF"     # speaking blue
+  c_error: "FF1744"     # error red
+
+esphome:
+  name: ${name}
+  friendly_name: ${friendly_name}
+  min_version: 2025.12.0
+  on_boot:
+    priority: -100
+    then:
+      - script.execute: { id: set_state, state: "idle" }
+
+esp32:
+  variant: esp32p4
+  flash_size: 16MB
+  cpu_frequency: 360MHz
+  framework:
+    type: esp-idf
+    advanced:
+      enable_idf_experimental_features: true
+
+psram:
+  mode: hex
+  speed: 200MHz
+
+logger:
+  hardware_uart: USB_SERIAL_JTAG
+
+# ---------------------------------------------------------------- network ----
+# Wi-Fi goes through the ESP32-C6 co-processor.
+esp32_hosted:
+  variant: ESP32C6
+  active_high: true
+  reset_pin: GPIO54
+  cmd_pin: GPIO19
+  clk_pin: GPIO18
+  d0_pin: GPIO14
+  d1_pin: GPIO15
+  d2_pin: GPIO16
+  d3_pin: GPIO17
+
+wifi:
+  ssid: !secret wifi_ssid
+  password: !secret wifi_password
+  ap:
+    ssid: "Jarvis Setup"
+
+captive_portal:
+
+api:
+  encryption:
+    key: !secret api_encryption_key
+  on_client_connected:
+    - micro_wake_word.start:
+    - script.execute: { id: set_state, state: "idle" }
+  on_client_disconnected:
+    - micro_wake_word.stop:
+    - script.execute: { id: set_state, state: "offline" }
+
+ota:
+  - platform: esphome
+    password: !secret ota_password
+
+time:
+  - platform: homeassistant
+    id: ha_time
+    timezone: ${timezone}
+    on_time:
+      - seconds: 0
+        then:
+          - lvgl.label.update:
+              id: lbl_clock
+              text: !lambda |-
+                return id(ha_time).now().strftime("%H:%M");
+          - lvgl.label.update:
+              id: lbl_date
+              text: !lambda |-
+                return id(ha_time).now().strftime("%A, %d %B");
+
+# ---------------------------------------------------------------- display ----
+esp_ldo:
+  - channel: 3
+    voltage: 2.5V     # MIPI DSI PHY
+
+output:
+  - platform: ledc
+    id: backlight_output
+    pin: GPIO23
+
+light:
+  - platform: monochromatic
+    id: backlight
+    name: Screen Backlight
+    output: backlight_output
+    restore_mode: ALWAYS_ON
+    default_transition_length: 250ms
+
+display:
+  - platform: mipi_dsi
+    id: main_display
+    model: JC1060P470
+    reset_pin: GPIO0
+    update_interval: never
+    auto_clear_enabled: false
+
+i2c:
+  - id: i2c_bus
+    sda: GPIO7
+    scl: GPIO8
+    frequency: 400kHz
+    sda_pullup_enabled: false
+    scl_pullup_enabled: false
+
+touchscreen:
+  - platform: gt911
+    id: touch
+    i2c_id: i2c_bus
+
+# ------------------------------------------------------------------ audio ----
+switch:
+  - platform: gpio
+    id: speaker_amp
+    name: Speaker Amplifier
+    pin: GPIO11           # PA_CTRL
+    restore_mode: ALWAYS_ON
+
+audio_dac:
+  - platform: es8311
+    id: es8311_codec
+    i2c_id: i2c_bus
+    address: 0x18
+    bits_per_sample: 16bit
+    sample_rate: 48000
+    use_mclk: true
+    use_microphone: true
+    mic_gain: 24DB
+
+i2s_audio:
+  - id: i2s_bus
+    i2s_lrclk_pin: GPIO10
+    i2s_bclk_pin: GPIO12
+    i2s_mclk_pin: GPIO13
+
+microphone:
+  - platform: i2s_audio
+    id: board_mic
+    i2s_audio_id: i2s_bus
+    i2s_mode: primary
+    adc_type: external
+    i2s_din_pin: GPIO48
+    sample_rate: 16000
+    bits_per_sample: 16bit
+    channel: stereo
+
+speaker:
+  - platform: i2s_audio
+    id: board_speaker
+    i2s_audio_id: i2s_bus
+    i2s_mode: primary
+    i2s_dout_pin: GPIO9
+    dac_type: external
+    audio_dac: es8311_codec
+    sample_rate: 48000
+    bits_per_sample: 16bit
+    channel: left
+    buffer_duration: 100ms
+  - platform: mixer
+    id: mixer_speaker
+    output_speaker: board_speaker
+    num_channels: 1
+    task_stack_in_psram: true
+    source_speakers:
+      - id: announcement_mixer_input
+      - id: media_mixer_input
+  - platform: resampler
+    id: announcement_resampler
+    output_speaker: announcement_mixer_input
+  - platform: resampler
+    id: media_resampler
+    output_speaker: media_mixer_input
+
+media_player:
+  - platform: speaker
+    id: jarvis_player
+    name: None
+    task_stack_in_psram: true
+    buffer_size: 1000000
+    volume_initial: 70%
+    announcement_pipeline:
+      speaker: announcement_resampler
+      format: FLAC
+      sample_rate: 48000
+      num_channels: 1
+    media_pipeline:
+      speaker: media_resampler
+      format: FLAC
+      sample_rate: 48000
+      num_channels: 1
+    on_announcement:
+      - if:
+          condition:
+            microphone.is_capturing:
+          then:
+            - micro_wake_word.stop:
+    on_idle:
+      - if:
+          condition:
+            not:
+              voice_assistant.is_running:
+          then:
+            - micro_wake_word.start:
+
+# ------------------------------------------------------------ voice brain ----
+micro_wake_word:
+  id: mww
+  microphone:
+    microphone: board_mic
+    channels: 0
+  models:
+    - model: hey_jarvis
+  on_wake_word_detected:
+    - voice_assistant.start:
+        wake_word: !lambda return wake_word;
+
+voice_assistant:
+  id: va
+  microphone:
+    microphone: board_mic
+    channels: 0
+  media_player: jarvis_player
+  micro_wake_word: mww
+  noise_suppression_level: 2
+  auto_gain: 31dBFS
+  volume_multiplier: 2.0
+  on_listening:
+    - script.execute: { id: set_state, state: "listening" }
+  on_stt_vad_end:
+    - script.execute: { id: set_state, state: "thinking" }
+  on_stt_end:
+    - lvgl.label.update:
+        id: lbl_you
+        text: !lambda 'return "You said - " + x;'
+  on_tts_start:
+    - script.execute: { id: set_state, state: "speaking" }
+    - lvgl.label.update:
+        id: lbl_reply
+        text: !lambda return x;
+  on_error:
+    - script.execute: { id: set_state, state: "error" }
+    - lvgl.label.update:
+        id: lbl_reply
+        text: !lambda return "Error - " + message;
+  on_end:
+    # Let the spoken reply finish before listening for the wake word again
+    - wait_until:
+        condition:
+          media_player.is_announcing:
+        timeout: 0.5s
+    - wait_until:
+        not:
+          media_player.is_announcing:
+    - script.execute: { id: set_state, state: "idle" }
+    - micro_wake_word.start:
+
+# -------------------------------------------------------------- UI state ----
+globals:
+  - id: spin_angle
+    type: int
+    initial_value: "0"
+  - id: spin_speed
+    type: int
+    initial_value: "1"
+
+script:
+  - id: set_state
+    mode: restart
+    parameters:
+      state: std::string
+    then:
+      - lambda: |-
+          uint32_t c = 0x${c_core};
+          const char *txt = "SAY  \"HEY JARVIS\"";
+          int speed = 1;
+          if (state == "listening") { c = 0x${c_listen}; txt = "LISTENING..."; speed = 6; }
+          else if (state == "thinking") { c = 0x${c_think}; txt = "THINKING..."; speed = 12; }
+          else if (state == "speaking") { c = 0x${c_speak}; txt = "SPEAKING"; speed = 4; }
+          else if (state == "error") { c = 0x${c_error}; txt = "SOMETHING WENT WRONG"; speed = 0; }
+          else if (state == "offline") { c = 0x555555; txt = "OFFLINE - WAITING FOR HOME ASSISTANT"; speed = 0; }
+          id(spin_speed) = speed;
+          lv_color_t col = lv_color_hex(c);
+          lv_obj_set_style_arc_color(id(ring_outer), col, LV_PART_INDICATOR);
+          lv_obj_set_style_arc_color(id(ring_mid), col, LV_PART_INDICATOR);
+          lv_obj_set_style_arc_color(id(ring_inner), col, LV_PART_INDICATOR);
+          lv_obj_set_style_border_color(id(core), col, LV_PART_MAIN);
+          lv_obj_set_style_shadow_color(id(core), col, LV_PART_MAIN);
+          lv_obj_set_style_text_color(id(lbl_status), col, LV_PART_MAIN);
+          lv_label_set_text(id(lbl_status), txt);
+
+interval:
+  # Spin the rings - faster when Jarvis is busy
+  - interval: 40ms
+    then:
+      - lambda: |-
+          if (id(spin_speed) == 0) return;
+          id(spin_angle) = (id(spin_angle) + id(spin_speed)) % 360;
+          int a = id(spin_angle);
+          lv_arc_set_rotation(id(ring_outer), a);
+          lv_arc_set_rotation(id(ring_mid), 360 - ((a * 2) % 360));
+          lv_arc_set_rotation(id(ring_inner), (a * 3) % 360);
+
+# ------------------------------------------------------------------- LVGL ----
+font:
+  - file: "gfonts://Orbitron@700"
+    id: font_title
+    size: 34
+  - file: "gfonts://Orbitron@500"
+    id: font_status
+    size: 20
+  - file: "gfonts://Orbitron@500"
+    id: font_clock
+    size: 64
+  - file: "gfonts://Rajdhani@500"
+    id: font_text
+    size: 24
+    glyphs: " !\"#$%&'()*+,-./0123456789:;<=>?@ABCDEFGHIJKLMNOPQRSTUVWXYZ[\\]^_`abcdefghijklmnopqrstuvwxyz{|}~°’“”…"
+
+lvgl:
+  displays: main_display
+  touchscreens: touch
+  buffer_size: 25%
+  color_depth: 16
+  bg_color: 0x000000
+  default_font: font_text
+  style_definitions:
+    - id: ring_style
+      bg_opa: TRANSP
+      border_width: 0
+      pad_all: 0
+  pages:
+    - id: home
+      bg_color: 0x02060A
+      widgets:
+        # Clock & date (top-left)
+        - label:
+            id: lbl_clock
+            x: 40
+            y: 24
+            text: "--:--"
+            text_font: font_clock
+            text_color: 0xE0F7FA
+        - label:
+            id: lbl_date
+            x: 44
+            y: 100
+            text: ""
+            text_color: 0x5E8C93
+
+        # Title (top-right)
+        - label:
+            align: TOP_RIGHT
+            x: -40
+            y: 36
+            text: "J.A.R.V.I.S."
+            text_font: font_title
+            text_color: 0x${c_core}
+
+        # Arc reactor (centre-left). Tap it to talk.
+        - obj:
+            id: reactor
+            x: 72
+            y: 150
+            width: 380
+            height: 380
+            styles: ring_style
+            widgets:
+              - arc:
+                  id: ring_outer
+                  align: CENTER
+                  width: 380
+                  height: 380
+                  styles: ring_style
+                  start_angle: 0
+                  end_angle: 300
+                  adjustable: false
+                  clickable: false
+                  arc_width: 6
+                  arc_color: 0x0B2730
+                  indicator:
+                    arc_width: 6
+                    arc_color: 0x${c_core}
+                  knob:
+                    bg_opa: TRANSP
+                  value: 100
+              - arc:
+                  id: ring_mid
+                  align: CENTER
+                  width: 310
+                  height: 310
+                  styles: ring_style
+                  adjustable: false
+                  clickable: false
+                  arc_width: 14
+                  arc_color: 0x0B2730
+                  indicator:
+                    arc_width: 14
+                    arc_color: 0x${c_core}
+                  knob:
+                    bg_opa: TRANSP
+                  min_value: 0
+                  max_value: 100
+                  value: 35
+              - arc:
+                  id: ring_inner
+                  align: CENTER
+                  width: 240
+                  height: 240
+                  styles: ring_style
+                  adjustable: false
+                  clickable: false
+                  arc_width: 4
+                  arc_color: 0x0B2730
+                  indicator:
+                    arc_width: 4
+                    arc_color: 0x${c_core}
+                  knob:
+                    bg_opa: TRANSP
+                  value: 70
+              - button:
+                  id: core
+                  align: CENTER
+                  width: 160
+                  height: 160
+                  radius: 80
+                  bg_color: 0x041218
+                  border_width: 4
+                  border_color: 0x${c_core}
+                  shadow_width: 40
+                  shadow_spread: 4
+                  shadow_color: 0x${c_core}
+                  shadow_opa: 60%
+                  widgets:
+                    - label:
+                        align: CENTER
+                        text: ""   # microphone icon
+                        text_font: montserrat_48
+                        text_color: 0xE0F7FA
+                  on_click:
+                    - if:
+                        condition: voice_assistant.is_running
+                        then:
+                          - voice_assistant.stop:
+                        else:
+                          - voice_assistant.start:
+
+        # Conversation panel (right)
+        - obj:
+            x: 500
+            y: 150
+            width: 484
+            height: 380
+            bg_color: 0x061017
+            border_width: 1
+            border_color: 0x12343E
+            radius: 12
+            pad_all: 20
+            scrollable: false
+            widgets:
+              - label:
+                  id: lbl_status
+                  align: TOP_LEFT
+                  text: "STARTING UP"
+                  text_font: font_status
+                  text_color: 0x${c_core}
+              - label:
+                  id: lbl_you
+                  y: 44
+                  width: 440
+                  long_mode: WRAP
+                  text: ""
+                  text_color: 0x5E8C93
+              - label:
+                  id: lbl_reply
+                  y: 120
+                  width: 440
+                  long_mode: WRAP
+                  text: "Good day. How can I help?"
+                  text_color: 0xE0F7FA
