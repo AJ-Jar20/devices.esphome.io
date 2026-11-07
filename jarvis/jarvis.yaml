@@ -1,10 +1,11 @@
 # =============================================================================
-#  J.A.R.V.I.S. - free, local AI voice assistant
+#  J.A.R.V.I.S. - personal AI assistant with an animated eyes face
 #  Board: Guition JC1060P470C_I_W_Y (7" 1024x600, ESP32-P4 + ESP32-C6)
 #
-#  Wake word "Hey Jarvis" runs ON the device (micro_wake_word).
-#  Speech-to-text, the AI "brain" and text-to-speech run in Home Assistant
-#  (Whisper + Ollama/Gemini + Piper) - see README.md in this folder.
+#  On the device:  "Hey Jarvis" wake word, mic, speaker, animated face, timers
+#  In Home Assistant: speech-to-text, the AI brain, text-to-speech and the
+#  Jarvis tools (moods, camera vision, automations, ESPHome configs).
+#  See README.md in this folder.
 #
 #  Hardware base taken from the community config:
 #  https://github.com/p1ngb4ck/unofficial_guition_esp32p4_repo/tree/main/JC1060P470_I_W_Y
@@ -14,21 +15,19 @@ substitutions:
   name: jarvis
   friendly_name: Jarvis
   timezone: Asia/Muscat
-  # Colours (hex, no #)
-  c_core: "00E5FF"      # idle cyan
-  c_listen: "00FF9C"    # listening green
-  c_think: "FFB300"     # thinking amber
-  c_speak: "2979FF"     # speaking blue
-  c_error: "FF1744"     # error red
 
 esphome:
   name: ${name}
   friendly_name: ${friendly_name}
   min_version: 2025.12.0
+  includes:
+    - jarvis_face.h
   on_boot:
     priority: -100
     then:
-      - script.execute: { id: set_state, state: "idle" }
+      - lambda: |-
+          face::begin(id(face_layer));
+          face::set_activity(face::OFFLINE);
 
 esp32:
   variant: esp32p4
@@ -70,12 +69,26 @@ captive_portal:
 api:
   encryption:
     key: !secret api_encryption_key
+  # Home Assistant calls these (the Jarvis tools in jarvis_package.yaml use them)
+  actions:
+    - action: set_mood
+      variables:
+        mood: string
+      then:
+        - lambda: face::set_emotion(mood);
+    - action: show_text
+      variables:
+        message: string
+      then:
+        - lvgl.label.update:
+            id: lbl_reply
+            text: !lambda return message;
   on_client_connected:
     - micro_wake_word.start:
-    - script.execute: { id: set_state, state: "idle" }
+    - lambda: face::set_activity(face::IDLE);
   on_client_disconnected:
     - micro_wake_word.stop:
-    - script.execute: { id: set_state, state: "offline" }
+    - lambda: face::set_activity(face::OFFLINE);
 
 ota:
   - platform: esphome
@@ -90,12 +103,7 @@ time:
         then:
           - lvgl.label.update:
               id: lbl_clock
-              text: !lambda |-
-                return id(ha_time).now().strftime("%H:%M");
-          - lvgl.label.update:
-              id: lbl_date
-              text: !lambda |-
-                return id(ha_time).now().strftime("%A, %d %B");
+              text: !lambda return id(ha_time).now().strftime("%H:%M");
 
 # ---------------------------------------------------------------- display ----
 esp_ldo:
@@ -143,6 +151,31 @@ switch:
     name: Speaker Amplifier
     pin: GPIO11           # PA_CTRL
     restore_mode: ALWAYS_ON
+  - platform: template
+    id: timer_ringing
+    name: Timer Ringing
+    optimistic: true
+    restore_mode: ALWAYS_OFF
+    on_turn_on:
+      - lambda: face::set_emotion("surprised");
+      - lvgl.label.update: { id: lbl_reply, text: "Timer finished, sir. Tap the screen to stop." }
+      - while:
+          condition:
+            switch.is_on: timer_ringing
+          then:
+            - media_player.speaker.play_on_device_media_file:
+                media_file: timer_sound
+                announcement: true
+            - wait_until:
+                media_player.is_announcing:
+            - wait_until:
+                not:
+                  media_player.is_announcing:
+            - delay: 500ms
+    on_turn_off:
+      - media_player.stop:
+          announcement: true
+      - lambda: face::set_emotion("happy");
 
 audio_dac:
   - platform: es8311
@@ -216,6 +249,9 @@ media_player:
       format: FLAC
       sample_rate: 48000
       num_channels: 1
+    files:
+      - id: timer_sound
+        file: sounds/timer.wav
     on_announcement:
       - if:
           condition:
@@ -236,13 +272,9 @@ micro_wake_word:
   microphone:
     microphone: board_mic
     channels: 0
-  # Two wake words, so each can be mapped to its own Home Assistant
-  # assistant: "Hey Jarvis" -> English, "Okay Nabu" -> Arabic (see README).
   models:
     - model: hey_jarvis
       id: ww_hey_jarvis
-    - model: okay_nabu
-      id: ww_okay_nabu
   on_wake_word_detected:
     - voice_assistant.start:
         wake_word: !lambda return wake_word;
@@ -258,28 +290,32 @@ voice_assistant:
   auto_gain: 31dBFS
   volume_multiplier: 2.0
   on_listening:
-    - script.execute: { id: set_state, state: "listening" }
+    - lambda: face::set_activity(face::LISTENING);
+    - lvgl.label.update: { id: lbl_you, text: "" }
+    - lvgl.label.update: { id: lbl_reply, text: "Listening..." }
   on_stt_vad_end:
-    - script.execute: { id: set_state, state: "thinking" }
+    - lambda: face::set_activity(face::THINKING);
   on_stt_end:
     - lvgl.label.update:
         id: lbl_you
         text: !lambda |-
-          // The screen font can't shape Arabic script, so show a note instead.
-          for (unsigned char ch : x) if (ch >= 0xD8 && ch <= 0xDB) return std::string("You spoke in Arabic");
-          return "You said - " + x;
+          std::string s = "\"" + x + "\"";
+          return s;
+    - lvgl.label.update: { id: lbl_reply, text: "" }
   on_tts_start:
-    - script.execute: { id: set_state, state: "speaking" }
+    - lambda: |-
+        face::guess_emotion(x);
+        face::set_activity(face::SPEAKING);
+    - lvgl.label.update:
+        id: lbl_reply
+        text: !lambda return x;
+  on_error:
+    - lambda: face::set_activity(face::ERROR);
     - lvgl.label.update:
         id: lbl_reply
         text: !lambda |-
-          for (unsigned char ch : x) if (ch >= 0xD8 && ch <= 0xDB) return std::string("(Replying in Arabic - listen to the speaker)");
-          return x;
-  on_error:
-    - script.execute: { id: set_state, state: "error" }
-    - lvgl.label.update:
-        id: lbl_reply
-        text: !lambda return "Error - " + message;
+          std::string s = "Hmm, something went wrong (" + code + ")";
+          return s;
   on_end:
     # Let the spoken reply finish before listening for the wake word again
     - wait_until:
@@ -289,70 +325,47 @@ voice_assistant:
     - wait_until:
         not:
           media_player.is_announcing:
-    - script.execute: { id: set_state, state: "idle" }
+    - lambda: face::set_activity(face::IDLE);
     - micro_wake_word.start:
+  # Timers ("Hey Jarvis, set a timer for 5 minutes")
+  on_timer_started:
+    - lvgl.label.update:
+        id: lbl_reply
+        text: !lambda |-
+          char buf[64];
+          snprintf(buf, sizeof(buf), "Timer set: %u min %u s", (unsigned) (timer.total_seconds / 60),
+                   (unsigned) (timer.total_seconds % 60));
+          return std::string(buf);
+  on_timer_finished:
+    - switch.turn_on: timer_ringing
 
-# -------------------------------------------------------------- UI state ----
-globals:
-  - id: spin_angle
-    type: int
-    initial_value: "0"
-  - id: spin_speed
-    type: int
-    initial_value: "1"
-
-script:
-  - id: set_state
-    mode: restart
-    parameters:
-      state: std::string
-    then:
-      - lambda: |-
-          uint32_t c = 0x${c_core};
-          const char *txt = "SAY  \"HEY JARVIS\"";
-          int speed = 1;
-          if (state == "listening") { c = 0x${c_listen}; txt = "LISTENING..."; speed = 6; }
-          else if (state == "thinking") { c = 0x${c_think}; txt = "THINKING..."; speed = 12; }
-          else if (state == "speaking") { c = 0x${c_speak}; txt = "SPEAKING"; speed = 4; }
-          else if (state == "error") { c = 0x${c_error}; txt = "SOMETHING WENT WRONG"; speed = 0; }
-          else if (state == "offline") { c = 0x555555; txt = "OFFLINE - WAITING FOR HOME ASSISTANT"; speed = 0; }
-          id(spin_speed) = speed;
-          lv_color_t col = lv_color_hex(c);
-          lv_obj_set_style_arc_color(id(ring_outer), col, LV_PART_INDICATOR);
-          lv_obj_set_style_arc_color(id(ring_mid), col, LV_PART_INDICATOR);
-          lv_obj_set_style_arc_color(id(ring_inner), col, LV_PART_INDICATOR);
-          lv_obj_set_style_border_color(id(core), col, LV_PART_MAIN);
-          lv_obj_set_style_shadow_color(id(core), col, LV_PART_MAIN);
-          lv_obj_set_style_text_color(id(lbl_status), col, LV_PART_MAIN);
-          lv_label_set_text(id(lbl_status), txt);
-
+# -------------------------------------------------------- face animation ----
 interval:
-  # Spin the rings - faster when Jarvis is busy
-  - interval: 40ms
+  - interval: 33ms
     then:
-      - lambda: |-
-          if (id(spin_speed) == 0) return;
-          id(spin_angle) = (id(spin_angle) + id(spin_speed)) % 360;
-          int a = id(spin_angle);
-          lv_arc_set_rotation(id(ring_outer), a);
-          lv_arc_set_rotation(id(ring_mid), 360 - ((a * 2) % 360));
-          lv_arc_set_rotation(id(ring_inner), (a * 3) % 360);
+      - lambda: face::tick(millis());
+
+# Pick a mood by hand from Home Assistant (handy for testing the face)
+select:
+  - platform: template
+    name: Face Mood
+    id: face_mood
+    optimistic: true
+    options: [neutral, happy, excited, sad, angry, surprised, confused, sleepy, love]
+    initial_option: neutral
+    set_action:
+      - lambda: face::set_emotion(x);
 
 # ------------------------------------------------------------------- LVGL ----
 font:
-  - file: "gfonts://Orbitron@700"
-    id: font_title
-    size: 34
-  - file: "gfonts://Orbitron@500"
-    id: font_status
-    size: 20
-  - file: "gfonts://Orbitron@500"
-    id: font_clock
-    size: 64
-  - file: "gfonts://Rajdhani@500"
+  - file: "gfonts://Rajdhani@600"
     id: font_text
-    size: 24
-    glyphs: " !\"#$%&'()*+,-./0123456789:;<=>?@ABCDEFGHIJKLMNOPQRSTUVWXYZ[\\]^_`abcdefghijklmnopqrstuvwxyz{|}~°’“”…"
+    size: 28
+    glyphs: " !\"#$%&'()*+,-./0123456789:;<=>?@ABCDEFGHIJKLMNOPQRSTUVWXYZ[\\]^_`abcdefghijklmnopqrstuvwxyz{|}~°’‘“”…–—"
+  - file: "gfonts://Rajdhani@500"
+    id: font_small
+    size: 22
+    glyphs: " !\"#$%&'()*+,-./0123456789:;<=>?@ABCDEFGHIJKLMNOPQRSTUVWXYZ[\\]^_`abcdefghijklmnopqrstuvwxyz{|}~°’‘“”…–—"
 
 lvgl:
   displays: main_display
@@ -361,120 +374,31 @@ lvgl:
   color_depth: 16
   bg_color: 0x000000
   default_font: font_text
-  style_definitions:
-    - id: ring_style
-      bg_opa: TRANSP
-      border_width: 0
-      pad_all: 0
   pages:
     - id: home
-      bg_color: 0x02060A
+      bg_color: 0x000000
+      scrollable: false
       widgets:
-        # Clock & date (top-left)
-        - label:
-            id: lbl_clock
-            x: 40
-            y: 24
-            text: "--:--"
-            text_font: font_clock
-            text_color: 0xE0F7FA
-        - label:
-            id: lbl_date
-            x: 44
-            y: 100
-            text: ""
-            text_color: 0x5E8C93
-
-        # Title (top-right)
-        - label:
-            align: TOP_RIGHT
-            x: -40
-            y: 36
-            text: "J.A.R.V.I.S."
-            text_font: font_title
-            text_color: 0x${c_core}
-
-        # Arc reactor (centre-left). Tap it to talk.
+        # The eyes are drawn into this layer by jarvis_face.h.
+        # Tapping anywhere on the face starts/stops listening (or stops a ringing timer).
         - obj:
-            id: reactor
-            x: 72
-            y: 150
-            width: 380
-            height: 380
-            styles: ring_style
-            widgets:
-              - arc:
-                  id: ring_outer
-                  align: CENTER
-                  width: 380
-                  height: 380
-                  styles: ring_style
-                  start_angle: 0
-                  end_angle: 300
-                  adjustable: false
-                  clickable: false
-                  arc_width: 6
-                  arc_color: 0x0B2730
-                  indicator:
-                    arc_width: 6
-                    arc_color: 0x${c_core}
-                  knob:
-                    bg_opa: TRANSP
-                  value: 100
-              - arc:
-                  id: ring_mid
-                  align: CENTER
-                  width: 310
-                  height: 310
-                  styles: ring_style
-                  adjustable: false
-                  clickable: false
-                  arc_width: 14
-                  arc_color: 0x0B2730
-                  indicator:
-                    arc_width: 14
-                    arc_color: 0x${c_core}
-                  knob:
-                    bg_opa: TRANSP
-                  min_value: 0
-                  max_value: 100
-                  value: 35
-              - arc:
-                  id: ring_inner
-                  align: CENTER
-                  width: 240
-                  height: 240
-                  styles: ring_style
-                  adjustable: false
-                  clickable: false
-                  arc_width: 4
-                  arc_color: 0x0B2730
-                  indicator:
-                    arc_width: 4
-                    arc_color: 0x${c_core}
-                  knob:
-                    bg_opa: TRANSP
-                  value: 70
-              - button:
-                  id: core
-                  align: CENTER
-                  width: 160
-                  height: 160
-                  radius: 80
-                  bg_color: 0x041218
-                  border_width: 4
-                  border_color: 0x${c_core}
-                  shadow_width: 40
-                  shadow_spread: 4
-                  shadow_color: 0x${c_core}
-                  shadow_opa: 60%
-                  widgets:
-                    - label:
-                        align: CENTER
-                        text: ""   # microphone icon
-                        text_font: montserrat_48
-                        text_color: 0xE0F7FA
-                  on_click:
+            id: face_layer
+            x: 0
+            y: 0
+            width: 1024
+            height: 600
+            bg_opa: TRANSP
+            border_width: 0
+            pad_all: 0
+            radius: 0
+            scrollable: false
+            on_click:
+              - if:
+                  condition:
+                    switch.is_on: timer_ringing
+                  then:
+                    - switch.turn_off: timer_ringing
+                  else:
                     - if:
                         condition: voice_assistant.is_running
                         then:
@@ -482,36 +406,38 @@ lvgl:
                         else:
                           - voice_assistant.start:
 
-        # Conversation panel (right)
-        - obj:
-            x: 500
-            y: 150
-            width: 484
-            height: 380
-            bg_color: 0x061017
-            border_width: 1
-            border_color: 0x12343E
-            radius: 12
-            pad_all: 20
-            scrollable: false
-            widgets:
-              - label:
-                  id: lbl_status
-                  align: TOP_LEFT
-                  text: "STARTING UP"
-                  text_font: font_status
-                  text_color: 0x${c_core}
-              - label:
-                  id: lbl_you
-                  y: 44
-                  width: 440
-                  long_mode: WRAP
-                  text: ""
-                  text_color: 0x5E8C93
-              - label:
-                  id: lbl_reply
-                  y: 120
-                  width: 440
-                  long_mode: WRAP
-                  text: "Good day. How can I help?"
-                  text_color: 0xE0F7FA
+        - label:
+            id: lbl_clock
+            x: 28
+            y: 18
+            text: "--:--"
+            text_font: font_small
+            text_color: 0x4F6B73
+
+        # Not shown - only here so ESPHome builds LVGL's line widget, used for the eyelids.
+        - line:
+            id: lvgl_line_enabler
+            hidden: true
+            points: [[0, 0], [1, 1]]
+
+        # Subtitles under the eyes: what you said, then Jarvis's reply
+        - label:
+            id: lbl_you
+            align: BOTTOM_MID
+            y: -100
+            width: 900
+            long_mode: DOT
+            text_align: CENTER
+            text: ""
+            text_font: font_small
+            text_color: 0x5E8C93
+        - label:
+            id: lbl_reply
+            align: BOTTOM_MID
+            y: -24
+            width: 940
+            height: 72
+            long_mode: DOT
+            text_align: CENTER
+            text: "Say \"Hey Jarvis\""
+            text_color: 0xE0F7FA

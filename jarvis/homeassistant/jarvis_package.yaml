@@ -1,0 +1,208 @@
+# =============================================================================
+#  Jarvis tools for Home Assistant
+#
+#  Put this file in /config/packages/ and make sure configuration.yaml has:
+#
+#    homeassistant:
+#      packages: !include_dir_named packages
+#
+#  Then restart Home Assistant and EXPOSE these scripts to Assist:
+#  Settings -> Voice assistants -> Expose -> + Expose entities -> pick the
+#  five "Jarvis ..." scripts. The AI can only use what is exposed.
+#
+#  Things to change for your home are marked  # <-- CHANGE
+# =============================================================================
+
+script:
+  # ---------------------------------------------------------------- mood ----
+  jarvis_set_mood:
+    alias: Jarvis set mood
+    icon: mdi:emoticon-outline
+    mode: queued
+    description: >-
+      Show an emotion on Jarvis's animated face. Call this ONCE before every
+      spoken reply, picking the emotion that fits the reply.
+    fields:
+      mood:
+        name: Mood
+        description: The emotion that matches your reply.
+        required: true
+        selector:
+          select:
+            options: [neutral, happy, excited, sad, angry, surprised, confused, sleepy, love]
+    sequence:
+      - action: esphome.jarvis_set_mood        # device name "jarvis" + action "set_mood"
+        data:
+          mood: "{{ mood }}"
+
+  # -------------------------------------------------------------- vision ----
+  jarvis_look:
+    alias: Jarvis look
+    icon: mdi:eye
+    mode: single
+    description: >-
+      Take a photo with Jarvis's camera and answer a question about it. Use this
+      whenever the user asks what you see, what something is, to read text, count
+      things, or to "look at" something. Returns a short description.
+    fields:
+      question:
+        name: Question
+        description: What the user wants to know about the picture, e.g. "What is this object?"
+        required: false
+        selector:
+          text:
+    variables:
+      camera_entity: camera.jarvis_eye                         # <-- CHANGE to your camera
+    sequence:
+      - action: ai_task.generate_data
+        data:
+          task_name: Jarvis vision
+          instructions: >-
+            {{ question if question else 'What is in this picture?' }}
+            Answer in one to three short sentences that sound natural when spoken.
+          attachments:
+            - media_content_id: "media-source://camera/{{ camera_entity }}"
+              media_content_type: image/jpeg
+        response_variable: vision
+      - variables:
+          result:
+            description: "{{ vision.data }}"
+      - stop: Done
+        response_variable: result
+
+  # -------------------------------------------------------- automations ----
+  jarvis_create_automation:
+    alias: Jarvis create automation
+    icon: mdi:robot
+    mode: single
+    description: >-
+      Create a new Home Assistant automation. ONLY call this after you have
+      described the automation to the user in plain words and they said yes.
+      automation_json must be ONE JSON object using current Home Assistant
+      automation syntax, for example:
+      {"alias": "[Jarvis] Porch light at sunset",
+       "description": "Created by Jarvis",
+       "triggers": [{"trigger": "sun", "event": "sunset"}],
+       "conditions": [],
+       "actions": [{"action": "light.turn_on", "target": {"entity_id": "light.porch"}}],
+       "mode": "single"}
+      Always start the alias with "[Jarvis] ". Use only real entity IDs you know
+      exist. If the result says ok is false, read the details, fix the JSON and
+      try once more, or explain the problem to the user.
+    fields:
+      automation_json:
+        name: Automation JSON
+        description: The complete automation as a JSON object (see the description).
+        required: true
+        selector:
+          text:
+            multiline: true
+    sequence:
+      - action: rest_command.jarvis_save_automation
+        data:
+          automation_id: "jarvis_{{ now().timestamp() | int }}"
+          config: "{{ automation_json }}"
+        response_variable: http
+      - variables:
+          result:
+            ok: "{{ http.status == 200 }}"
+            status: "{{ http.status }}"
+            details: "{{ http.content }}"
+      - stop: Done
+        response_variable: result
+
+  # ------------------------------------------------------------- ESPHome ----
+  jarvis_draft_esphome_config:
+    alias: Jarvis draft ESPHome config
+    icon: mdi:chip
+    mode: single
+    description: >-
+      Send the user a complete ESPHome YAML configuration for a new device as a
+      Home Assistant notification, so they can paste it into the ESPHome Device
+      Builder and install it. Use when the user asks you to make, write or set up
+      an ESPHome device or sensor. Use current ESPHome syntax, !secret wifi_ssid
+      and !secret wifi_password for Wi-Fi, and include api: and ota:. Never read
+      the YAML out loud - just say it has been sent to Home Assistant, and mention
+      any wiring the user must do.
+    fields:
+      device_name:
+        name: Device name
+        description: Short lowercase name with hyphens, e.g. "garage-door-sensor".
+        required: true
+        selector:
+          text:
+      yaml:
+        name: YAML
+        description: The full ESPHome configuration.
+        required: true
+        selector:
+          text:
+            multiline: true
+      notes:
+        name: Notes
+        description: Wiring and setup notes for the user (pins, parts, steps).
+        required: false
+        selector:
+          text:
+            multiline: true
+    sequence:
+      - action: persistent_notification.create
+        data:
+          notification_id: "jarvis_esphome_{{ device_name | slugify }}"
+          title: "Jarvis: ESPHome config for {{ device_name }}"
+          message: |
+            {{ notes if notes else '' }}
+
+            **How to use:** ESPHome Device Builder -> + New device -> name it
+            `{{ device_name }}` -> Skip -> Edit -> replace everything with:
+
+            ```yaml
+            {{ yaml }}
+            ```
+      - variables:
+          result:
+            sent: true
+      - stop: Done
+        response_variable: result
+
+  # ---------------------------------------------------------- web search ----
+  jarvis_web_search:
+    alias: Jarvis web search
+    icon: mdi:web
+    mode: queued
+    description: >-
+      Search the internet for up-to-date information (news, prices, opening
+      hours, sports results, recent events, facts you are unsure about).
+      Returns an answer with the latest information.
+    fields:
+      query:
+        name: Query
+        description: What to search for, as a full question.
+        required: true
+        selector:
+          text:
+    sequence:
+      - action: conversation.process
+        data:
+          agent_id: conversation.jarvis_search                  # <-- CHANGE to your search agent
+          text: "{{ query }}"
+        response_variable: answer
+      - variables:
+          result:
+            answer: "{{ answer.response.speech.plain.speech }}"
+      - stop: Done
+        response_variable: result
+
+# Lets Jarvis save automations through Home Assistant's own config API
+# (the same one the automation editor uses). It needs a long-lived access token:
+# Profile -> Security -> Long-lived access tokens -> Create, then add to secrets.yaml:
+#   jarvis_ha_token: "Bearer eyJhbGciOi....."
+rest_command:
+  jarvis_save_automation:
+    url: "http://127.0.0.1:8123/api/config/automation/config/{{ automation_id }}"  # use https:// if you set up SSL in HA
+    method: POST
+    headers:
+      Authorization: !secret jarvis_ha_token
+      Content-Type: application/json
+    payload: "{{ config if config is string else (config | to_json) }}"
+    timeout: 20
