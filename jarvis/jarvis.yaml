@@ -185,7 +185,7 @@ speaker:
     channel: left
     buffer_duration: 100ms
   - platform: mixer
-    id: mixer_speaker
+    id: speaker_mixer
     output_speaker: board_speaker
     num_channels: 1
     task_stack_in_psram: true
