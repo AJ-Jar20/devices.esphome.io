@@ -236,8 +236,13 @@ micro_wake_word:
   microphone:
     microphone: board_mic
     channels: 0
+  # Two wake words, so each can be mapped to its own Home Assistant
+  # assistant: "Hey Jarvis" -> English, "Okay Nabu" -> Arabic (see README).
   models:
     - model: hey_jarvis
+      id: ww_hey_jarvis
+    - model: okay_nabu
+      id: ww_okay_nabu
   on_wake_word_detected:
     - voice_assistant.start:
         wake_word: !lambda return wake_word;
@@ -259,12 +264,17 @@ voice_assistant:
   on_stt_end:
     - lvgl.label.update:
         id: lbl_you
-        text: !lambda 'return "You said - " + x;'
+        text: !lambda |-
+          // The screen font can't shape Arabic script, so show a note instead.
+          for (unsigned char ch : x) if (ch >= 0xD8 && ch <= 0xDB) return std::string("You spoke in Arabic");
+          return "You said - " + x;
   on_tts_start:
     - script.execute: { id: set_state, state: "speaking" }
     - lvgl.label.update:
         id: lbl_reply
-        text: !lambda return x;
+        text: !lambda |-
+          for (unsigned char ch : x) if (ch >= 0xD8 && ch <= 0xDB) return std::string("(Replying in Arabic - listen to the speaker)");
+          return x;
   on_error:
     - script.execute: { id: set_state, state: "error" }
     - lvgl.label.update:

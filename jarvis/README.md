@@ -19,83 +19,90 @@ reply shown on screen. It's free: no subscriptions, and all software is open sou
 | `jarvis.yaml` | ESPHome firmware for the display: audio, wake word, voice assistant, Jarvis UI |
 | `secrets.example.yaml` | Copy to `secrets.yaml` and put in your Wi-Fi details |
 
+## Recommended setup for your hardware
+
+Your mini PC (Intel i7 6th/7th gen, 8 GB RAM, no graphics card) is a good Home Assistant
+server. **You don't need to buy anything.** It's stronger than a Raspberry Pi 4.
+
+| Job | Runs on | Choice | Why |
+|-----|---------|--------|-----|
+| Wake word | Display | "Hey Jarvis" = English, "Okay Nabu" = Arabic | Runs on the board itself |
+| Speech-to-text | Mini PC | Whisper `small-int8` | Understands both Arabic and English, 2-4 s on that CPU |
+| AI brain | Cloud (free) | **Google Gemini** free API | A local AI on 8 GB without a GPU would be slow, and weak at Arabic |
+| Voice (English) | Mini PC | Piper `en_GB-alan-medium` | British butler voice, local |
+| Voice (Arabic) | Mini PC or cloud | Piper `ar_JO-kareem-medium`, or Google Translate TTS (free, more natural) | |
+
+Optional upgrade: 16 GB RAM (cheap) and an SSD instead of an HDD make Home Assistant faster.
+Neither is needed.
+
 ## What you need
 
 - The **JC1060P470C_I_W_Y** display, with a speaker plugged into the 2-pin speaker
   connector (#3 on the board diagram). The microphone is built in.
-- A **computer that stays on** to run Home Assistant: a Raspberry Pi 4/5, an old laptop, a mini PC,
-  or your desktop.
-  - To run the AI brain **locally** (Ollama), you need a PC with 16 GB RAM, ideally with an NVIDIA GPU.
-  - On a weak machine or a Pi, use the free **Gemini** brain instead (step 3b).
+- Home Assistant (you already have it) with its **Add-ons** menu. That menu comes with Home Assistant OS.
+  On Docker ("Container"), use the Docker notes below instead.
 
 ---
 
-## Step 1: Install Home Assistant (free)
+## Step 1: Speech-to-text and text-to-speech (free)
 
-Pick one:
+Go to **Settings → Add-ons → Add-on store** and install and start:
 
-- **Raspberry Pi / spare PC:** flash *Home Assistant OS*. See https://www.home-assistant.io/installation/
-- **Your Windows/Linux PC:** run Home Assistant OS in VirtualBox, or use Docker (`homeassistant/home-assistant`).
-
-Open `http://homeassistant.local:8123` and create your account.
-
-## Step 2: Speech-to-text and text-to-speech (local, free)
-
-On Home Assistant OS, go to **Settings → Add-ons → Add-on store** and install and start:
-
-1. **Whisper** turns speech into text. Model: `base-int8` (fast) or `small-int8` (more accurate).
-   Set the language to `en`, or `ar` for Arabic.
-2. **Piper** turns text into speech. For a British "butler" voice, try `en_GB-alan-medium`
-   or `en_GB-northern_english_male-medium`. For Arabic, use `ar_JO-kareem-medium`.
-3. **openWakeWord** is *not* needed. The display hears "Hey Jarvis" by itself.
+1. **Whisper.** In its Configuration, set the model to `small-int8` and the language to `auto`, then
+   restart it. One model serves both languages, because each assistant (step 3) tells Whisper
+   which language to expect.
+2. **Piper.** Voices download automatically when you pick them in step 3.
+3. **openWakeWord** is *not* needed. The display hears its wake words by itself.
 
 Then go to **Settings → Devices & services**. Whisper and Piper show up as discovered **Wyoming**
 integrations; click **Configure** on each.
 
-> On Docker instead of Home Assistant OS, run the `rhasspy/wyoming-whisper` and `rhasspy/wyoming-piper`
-> containers and add them with the **Wyoming Protocol** integration.
+Optional, for a more natural Arabic voice: **Add integration → Google Translate text-to-speech**
+(free, needs internet).
 
-## Step 3: Give Jarvis a brain (choose one)
+> On Docker, run the `rhasspy/wyoming-whisper` and `rhasspy/wyoming-piper` containers and add
+> them with the **Wyoming Protocol** integration.
 
-### 3a. Ollama: fully local, private, unlimited
+## Step 2: Give Jarvis a brain (Google Gemini, free)
 
-1. Install Ollama on your PC: https://ollama.com/download
-2. Download a model, for example `ollama pull qwen3:8b` (or `llama3.1:8b`; on a weak PC use `qwen3:4b`).
-3. Let Home Assistant reach it. Start Ollama with `OLLAMA_HOST=0.0.0.0`.
-4. In Home Assistant, go to **Settings → Devices & services → Add integration → Ollama**, enter
-   `http://<PC-IP>:11434`, pick the model, and enable **Control Home Assistant** (Assist).
-
-### 3b. Google Gemini: free API tier, smarter, needs internet
-
-1. Get a free API key at https://aistudio.google.com/apikey
-2. In Home Assistant, go to **Add integration → Google Generative AI**, paste the key, and enable
-   **Control Home Assistant**.
-3. The free tier has rate limits, and Google may use free-tier conversations to improve its models.
-
-### Jarvis's personality
-
-In the Ollama or Gemini integration options, set the **Instructions** to something like:
+1. Get a free API key at https://aistudio.google.com/apikey. Sign in with a Google account; no card
+   is needed.
+2. In Home Assistant, go to **Settings → Devices & services → Add integration → Google Generative AI**
+   and paste the key.
+3. Open its options, choose a **Flash** model (fast, with generous free limits), and enable
+   **Control Home Assistant** (Assist), so Jarvis can switch your devices.
+4. Set the **Instructions** (this is Jarvis's personality):
 
 ```
-You are J.A.R.V.I.S., a witty, loyal and highly capable British AI butler.
-Address the user as "sir". Keep spoken answers short (1-3 sentences), clear and a little dry-humoured.
-You can control the smart home through the tools you are given. Never use emojis or markdown -
-your answers are spoken aloud.
+You are J.A.R.V.I.S., a witty, loyal and highly capable AI butler.
+Always reply in the same language the user spoke: Arabic (Modern Standard or Gulf/Omani dialect,
+matching the user) or English with a British tone.
+Address the user as "sir" in English and "سيدي" in Arabic.
+Keep spoken answers short (1-3 sentences). Never use emojis, markdown or lists - your answers are spoken aloud.
+You can control the smart home through the tools you are given.
 ```
 
-## Step 4: Create the "Jarvis" voice pipeline
+Notes on the free tier: there are daily request limits (plenty for home use), and Google may use
+free-tier conversations to improve its models. Smart-home commands like "turn on the lights" are
+handled locally by Home Assistant first, so they're instant and don't use Gemini at all.
 
-Go to **Settings → Voice assistants → Add assistant**:
+> **A fully local alternative, later:** install Ollama on a PC with 16 GB+ RAM, ideally with an
+> NVIDIA GPU, and add the **Ollama** integration instead. On your current 8 GB mini PC it would
+> take 10-30 seconds per answer.
 
-- Name: `Jarvis`
-- Conversation agent: your Ollama or Gemini agent. Turn on **Prefer handling commands locally**,
-  so "turn on the lights" is instant.
-- Speech-to-text: `faster-whisper`
-- Text-to-speech: `piper`, with the voice you chose
+## Step 3: Create two assistants (English and Arabic)
 
-Star it to make it the **preferred** assistant.
+Go to **Settings → Voice assistants → Add assistant** and make two:
 
-## Step 5: Flash the display
+| Setting | **Jarvis (English)** | **Jarvis (Arabic)** |
+|---------|----------------------|---------------------|
+| Language | English | العربية (Arabic) |
+| Conversation agent | Google Generative AI | Google Generative AI |
+| Prefer handling commands locally | On | On |
+| Speech-to-text | faster-whisper | faster-whisper |
+| Text-to-speech | Piper: `en_GB-alan-medium` | Piper: `ar_JO-kareem-medium` (or Google Translate, Arabic) |
+
+## Step 4: Flash the display
 
 1. Install the **ESPHome Device Builder** add-on (Settings → Add-ons), or on your PC run `pip install esphome`.
 2. Copy this folder over, rename `secrets.example.yaml` to `secrets.yaml`, and fill it in.
@@ -106,11 +113,27 @@ Star it to make it the **preferred** assistant.
    esphome run jarvis.yaml
    ```
    Later updates go over Wi-Fi.
-5. Home Assistant will discover **Jarvis**. Click **Configure**, then open the device page and set
-   its **Assistant** to `Jarvis`.
+5. Home Assistant will discover **Jarvis**. Click **Configure**.
 
-Say **"Hey Jarvis... what's the weather like?"** You can also tap the arc reactor to talk without
-the wake word.
+## Step 5: One wake word per language
+
+Open the display's device page: **Settings → Devices → Jarvis → Configuration**.
+
+- **Wake word:** `Hey Jarvis`, with **Assistant:** `Jarvis (English)`
+- **Wake word 2:** `Okay Nabu`, with **Assistant 2:** `Jarvis (Arabic)`
+
+(Recent Home Assistant versions show these second wake word and assistant options for ESPHome devices
+that have two wake words. If yours doesn't, update Home Assistant.)
+
+Try it:
+- **"Hey Jarvis, what's the weather like?"**
+- **"Okay Nabu, شغّل الإضاءة في الصالة"** ("turn on the living room lights")
+
+You can also tap the arc reactor to talk without a wake word. That uses the first assistant.
+
+> **On-screen text:** the display shows English text. Arabic replies are **spoken** in full, but the
+> screen shows a short note instead of the Arabic text, because the ESPHome display library can't yet
+> join Arabic letters correctly. Unjoined letters would look like broken text.
 
 ## Troubleshooting
 
@@ -121,13 +144,15 @@ the wake word.
 | Hears you but no voice reply | Check the speaker is in connector #3, and that the "Speaker Amplifier" switch is on in Home Assistant |
 | Wake word triggers too often or not at all | Change `mic_gain` (try `18DB` or `30DB`) in `audio_dac:` |
 | Screen says OFFLINE | Home Assistant hasn't connected yet. Check the device was adopted in Settings → Devices |
-| Arabic text shows boxes | The fonts only include Latin letters. Add an Arabic Google font (e.g. `Noto Sans Arabic`) with Arabic glyphs |
+| Arabic answers are slow | Make sure the Whisper model is `small-int8`, not `medium`, and that Home Assistant isn't running from a slow HDD |
+| Arabic is misheard | Speak a little closer to the display, or try Whisper `medium-int8` (more accurate, about 2x slower) |
 
 ## Customising
 
 - **Colours:** change the `c_*` substitutions at the top of `jarvis.yaml`.
 - **Time zone:** the `timezone` substitution (default `Asia/Muscat`).
-- **More wake words:** add `- model: okay_nabu` under `micro_wake_word: models:`.
+- **Swap the Arabic wake word:** replace `okay_nabu` with `hey_mycroft` in `jarvis.yaml`.
+  There's no ready-made Arabic wake word yet.
 
 ## Credits
 
