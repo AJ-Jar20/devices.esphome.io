@@ -1,146 +1,128 @@
-# J.A.R.V.I.S.: a personal AI assistant with a face
+# J.A.R.V.I.S.: your personal AI assistant
 
-Say **"Hey Jarvis"** to the 7" Guition ESP32-P4 display. Its eyes wake up, listen, think and react
-with emotions while it answers. It can:
+**Hardware: just two things**
+1. **Raspberry Pi 5 (8 GB) + NVMe SSD HAT**, running Home Assistant OS
+2. **Guition 7" display JC1060P470C_I_W_Y** (ESP32-P4 + ESP32-C6), with a speaker plugged into
+   its speaker connector. The microphone is built in.
 
-- answer questions and look things up on the web
-- control your smart home
-- set timers
-- look through a camera and tell you what it sees
-- **create Home Assistant automations** for you
-- **write ESPHome configs** for new devices
+Optional: **your computer**, so Jarvis can hand it tasks (step 7).
 
-Everything is free: open-source software plus Google's free Gemini API tier.
+Say **"Hey Jarvis"**. The eyes on the display wake up, listen, think and react with emotions while
+Jarvis answers.
 
 ![Jarvis moods](docs/moods.png)
 
-<details><summary>Animation preview (idle, listening, thinking, happy reply)</summary>
+<details><summary>Animation preview</summary>
 
 ![Jarvis face animation](docs/face.gif)
 
 </details>
 
-The previews are rendered from the real face code (`jarvis_face.h`) with the same LVGL version the
-display uses. The display font differs slightly from the preview font.
+## What Jarvis can do
+
+| You say | What happens |
+|---|---|
+| "Turn off all the lights" / "Is the front door locked?" | Smart-home control, instant and handled locally |
+| "Every day at sunset, turn on the porch light" | Explains the automation, asks *"Shall I create it?"*, then **creates it** in Home Assistant |
+| "How do I make a smart light switch with ESPHome?" | Says a short answer and **sends the full step-by-step guide** (parts, wiring, YAML) to your phone and Home Assistant |
+| "Write me an ESPHome config for a DHT22 on GPIO4" | Sends the ready-to-paste config plus wiring notes |
+| "On my computer, write a script that sorts my downloads" | Hands the task to the AI on your PC (Gemini CLI or Claude Code), then **announces the result** |
+| "Who won the match last night?" / "What's the price of gold?" | Searches the web |
+| "Explain black holes" / any general question | General knowledge |
+| "Set a timer for 10 minutes" | Timer on the display, with an alarm and a surprised face |
+| "Add milk to the shopping list" | Home Assistant to-do list |
+
+Tap the face to talk without the wake word.
+
+## Honest limits
+
+- **The brain is Google Gemini (free tier, cloud).** A Pi 5 can't run an AI model big enough to write
+  automations, design DIY projects and answer anything at conversational speed. Everything else is
+  local: wake word, face, speech-to-text, voice, smart-home control. Simple commands like "lights
+  off" never leave your home. Free-tier limits are plenty for home use, and Google may use free-tier
+  chats to improve its models.
+- **No camera for now.** The display has a camera, but ESPHome can't use that type of camera
+  (MIPI-CSI) on the ESP32-P4 yet. Vision can be added once it's supported.
+- **Computer tasks** need your computer switched on and the small Jarvis PC agent running. Gemini
+  CLI is free; Claude Code needs a Claude subscription.
+- **The face is tested in a simulation,** not yet on a real display. The firmware compiles, and the
+  previews above are rendered from the real face code with the display's graphics library.
 
 ## How it fits together
 
 ```
- Display (ESP32-P4)                Raspberry Pi 5 8 GB + NVMe SSD (Home Assistant OS)
- ─────────────────                 ───────────────────────────────────────────────────
- "Hey Jarvis" wake word     ──▶    Voice pipeline "Jarvis"
- mic + speaker                       Whisper add-on  (speech → text, local)
- animated eyes + subtitles  ◀──      Piper add-on    (text → voice, local)
- timers                              Brain: Google Gemini (free tier)
-                                   Jarvis tools (jarvis_package.yaml):
-                                     • set_mood     → face reacts
-                                     • look         → camera + AI vision
-                                     • create_automation
-                                     • draft_esphome_config
-                                     • web_search
-                                   Your smart devices
- Camera: Pi Zero 2 W + camera module (or an ESP32-S3 camera board)
+ Display (ESP32-P4)              Raspberry Pi 5 + SSD (Home Assistant OS)       Your computer (optional)
+ ──────────────────              ────────────────────────────────────────       ────────────────────────
+ "Hey Jarvis" wake word   ──▶    Whisper add-on  (speech → text, local)
+ mic + speaker                   Piper add-on    (text → voice, local)
+ animated eyes + subtitles ◀──   Brain: Google Gemini (free)
+ timers                          Jarvis tools (jarvis_package.yaml):
+                                   set mood · create automation · send guide
+                                   draft ESPHome config · web search
+                                   computer task  ─────────────────────────▶   jarvis_pc_agent.py
+                                 Your smart devices                            → Gemini CLI / Claude Code
 ```
-
-### Why this split
-
-| | Where | Why |
-|---|---|---|
-| Wake word, face, timers | Display | Instant and offline |
-| Home Assistant, speech-to-text, voice | **Pi 5 on the SSD** | One small, quiet box. The Pi 5 is 2-3x faster than the Pi 4, and the SSD makes Home Assistant fast and far more reliable than an SD card |
-| **Brain and vision** | Google Gemini, free tier | Writing automations and ESPHome configs and understanding photos needs a big AI model. No Pi or mini PC can run one at a usable speed |
-
-Your other hardware:
-- **Pi 4:** free once Home Assistant moves to the Pi 5. It can be Jarvis's camera instead of the
-  Zero 2 W, or a spare.
-- **Mini PC:** no longer needed for Jarvis. It's an optional speed boost: run `mini-pc/docker-compose.yml`
-  on it for faster, more accurate speech-to-text.
-- **Pico:** not needed here. Keep it for sensors.
-- **Zero 2 W:** Jarvis's camera, see step 6.
-
-**What about fully offline?** It's possible later. You'd need a desktop with an NVIDIA GPU, such as
-a used RTX 3060 12 GB, running Ollama with a ~14B model and a vision model. Switching over means
-changing two dropdowns in Home Assistant; nothing on the display changes.
 
 ## Files
 
 | File | What it is |
 |------|------------|
 | `jarvis.yaml` | ESPHome firmware for the display |
-| `jarvis_face.h` | The animated eyes (blinking, glancing, 9 emotions) |
+| `jarvis_face.h` | The animated eyes: blinking, glancing, 9 emotions |
 | `sounds/timer.wav` | Timer alarm |
-| `secrets.example.yaml` | Copy to `secrets.yaml` and fill in your Wi-Fi details |
+| `secrets.example.yaml` | Template for your Wi-Fi details |
 | `homeassistant/jarvis_package.yaml` | The Jarvis tools for Home Assistant |
-| `mini-pc/docker-compose.yml` | Optional: faster Whisper and Piper on the mini PC |
-| `camera-pi-zero/mediamtx.yml` | Turns a Pi Zero 2 W into a network camera |
+| `pc-agent/` | The optional agent for your computer, with its own README |
 
 ---
 
-## Step 0: Move Home Assistant to the Pi 5 + SSD
+## Step 1: Home Assistant OS on the Pi 5 + SSD
 
-You keep all your devices, automations and settings: you take a backup on the Pi 4 and restore
-it on the Pi 5.
+**Hardware:** fit the SSD HAT and the SSD, a cooler or fan, and use the **official 27 W USB-C power
+supply**. An SSD on a weaker charger causes random reboots.
 
-**Hardware**
-- Fit the SSD HAT and the NVMe SSD, and use the **official 27 W USB-C power supply**. The Pi 5 plus
-  an SSD can be unstable on weaker chargers.
-- Fit a cooler (the official Active Cooler, or the fan in your case). Speech-to-text works the CPU hard.
+**Install:**
+- **With a USB NVMe adapter:** plug the SSD into your PC, open **Raspberry Pi Imager**, choose
+  *Raspberry Pi 5* → *Other specific-purpose OS → Home assistants and home automation →
+  Home Assistant OS (RPi 5)* → the SSD, and write it. Then fit the SSD in the HAT.
+- **Without an adapter:** write Raspberry Pi OS to a microSD card, boot the Pi 5 from it, run
+  Raspberry Pi Imager *on the Pi* to write Home Assistant OS to the SSD, then shut down and
+  **remove the SD card**.
 
-**1. Back up the Pi 4**
-1. **Settings → System → Backups → Backup now**, choosing a **full backup**.
-2. Click the backup, **Download**, and keep the `.tar` file and its **encryption key** on your PC.
+If it won't boot from the SSD: boot Raspberry Pi OS from the SD card, run `sudo raspi-config`, choose
+**Advanced Options → Boot Order → NVMe/USB Boot**, and update the bootloader.
 
-**2. Install Home Assistant OS on the SSD**
+**First start:** connect Ethernet, open `http://homeassistant.local:8123` and create your account.
 
-Pick whichever is easier:
-- **A) With a USB NVMe adapter:** plug the SSD into your PC and open **Raspberry Pi Imager**.
-  Choose Device: *Raspberry Pi 5*, then OS: *Other specific-purpose OS → Home assistants and home
-  automation → Home Assistant → Home Assistant OS (RPi 5)*, then Storage: the SSD. Write it, then
-  fit the SSD back in the HAT.
-- **B) Without an adapter:** write **Raspberry Pi OS** to a microSD card, boot the Pi 5 from it,
-  open Raspberry Pi Imager *on the Pi*, and write Home Assistant OS (RPi 5) to the SSD as above.
-  Then shut down and **remove the SD card**.
+- **Moving from your Pi 4?** First take a full backup there (**Settings → System → Backups**) and
+  download it. On the Pi 5's welcome screen, choose **Restore from backup**. Turn the Pi 4 off first.
+- Give the Pi 5 a **fixed IP** in your router.
 
-If the Pi 5 won't boot from the SSD: boot Raspberry Pi OS from the SD card, run `sudo raspi-config`,
-choose **Advanced Options → Boot Order → NVMe/USB Boot**, and update the bootloader when it asks.
+## Step 2: Local speech-to-text and voice
 
-**3. Restore**
-1. Shut down the Pi 4 so the two don't clash on the network.
-2. Boot the Pi 5 with an Ethernet cable, open `http://homeassistant.local:8123`, wait for it to
-   finish preparing, then choose **Upload backup / Restore from backup**. Pick the `.tar` file and
-   enter its key.
-3. After the restore, everything comes back: devices, add-ons, automations. If you use a fixed IP
-   reservation for Home Assistant in your router, move it to the Pi 5's network address.
+Go to **Settings → Add-ons → Add-on store**, then install, start, and turn on *Start on boot* for:
 
-## Step 1: Speech-to-text and voice (add-ons on the Pi 5)
-
-**Settings → Add-ons → Add-on store**, then install and start:
-
-1. **Whisper.** In Configuration, set the language to `en` and the model to `base-int8`
-   (fast, about 1-2 s on a Pi 5). If it mishears you often, try `small-int8` (more accurate,
-   roughly twice as slow).
+1. **Whisper.** Language `en`, model `base-int8` (fast, about 1-2 s on a Pi 5). If it mishears
+   you, try `small-int8` (more accurate, roughly twice as slow).
 2. **Piper.** Voice `en_GB-alan-medium` (British, butler-like).
 
-Both show up under **Settings → Devices & services** as discovered **Wyoming** integrations; click
-**Configure** on each.
+Then go to **Settings → Devices & services**: both appear as discovered **Wyoming** integrations.
+Click **Configure** on each.
 
-> **Optional speed boost with the mini PC:** run `mini-pc/docker-compose.yml` on it (Ubuntu +
-> Docker, `docker compose up -d`) and add it with **Add integration → Wyoming Protocol**:
-> `<mini-PC-IP>` port `10300`. Then pick it as the speech-to-text in step 3. You don't need it.
-
-## Step 2: Gemini brain (free)
+## Step 3: Jarvis's brain (Google Gemini, free)
 
 1. Get a free API key at https://aistudio.google.com/apikey (Google account, no card).
-2. Go to **Add integration → Google Generative AI** and paste the key. Use a **Flash** model.
-   This creates a conversation agent and an **AI Task** entity, which is used for camera vision.
-3. **Settings → System → General → AI suggestions (AI Task):** set Google's AI Task entity as the default.
-4. Open the conversation agent's options:
+2. Go to **Settings → Devices & services → Add integration → Google Generative AI**, paste the key,
+   and choose a **Flash** model.
+3. Open the conversation agent's options:
    - **Control Home Assistant:** Assist
-   - **Instructions:**
+   - **Instructions:** paste the text below.
 
 ```
 You are J.A.R.V.I.S., a witty, loyal and highly capable British AI assistant. Call the user "sir".
 Your answers are spoken aloud: keep them to 1-3 short sentences, no emojis, no markdown, no lists.
+You are an expert in Home Assistant, ESPHome, electronics, DIY smart-home projects and general
+knowledge.
 
 Before EVERY reply, call "Jarvis set mood" with the emotion that fits your reply
 (happy when something worked, sad for bad news, surprised for amazing facts, confused if
@@ -148,32 +130,33 @@ you didn't understand, excited for good news, love when thanked, angry only play
 
 Tools:
 - Smart home: control and check exposed devices directly.
-- "Jarvis look": whenever the user asks what you see / what this is / to read or look at something.
 - "Jarvis web search": for news, prices, weather details, opening hours, recent events,
   or anything you are not sure about. Never invent facts.
+- "Jarvis send guide": whenever a full answer is too long to speak (DIY build steps, parts
+  lists, wiring, explanations, code). Speak one sentence and send the rest.
+- "Jarvis draft ESPHome config": when asked to make or set up an ESPHome device. Use current
+  ESPHome syntax. Never read YAML aloud.
 - "Jarvis create automation": when asked to automate something. FIRST explain in one sentence
-  what the automation will do and ask "Shall I create it?". Only call the tool after the user
-  says yes. Start the alias with "[Jarvis] ".
-- "Jarvis draft ESPHome config": when asked to make or set up an ESPHome device. Say it was sent
-  to Home Assistant, and explain any wiring briefly. Never read YAML aloud.
+  what it will do and ask "Shall I create it?". Only call the tool after the user says yes.
+- "Jarvis computer task": when asked to do something on the user's computer, in Claude or in
+  Gemini, or anything that needs files. Confirm first if it deletes, sends, buys or publishes.
+  Then say the task has started; the result is announced when it finishes.
 - Timers, shopping list and to-do lists: use the built-in tools.
 ```
 
-### Web search agent (optional)
+### Web search agent
 
-The Gemini integration has a **Google Search** option, but in Home Assistant it can't be combined
-with smart-home control in the same agent. So add a **second** agent just for searching:
+The Gemini integration's **Google Search** option can't be combined with smart-home control in the
+same agent, so add a second agent just for searching:
 
-1. On the Google Generative AI integration, click **Add conversation agent** (or add the integration
-   again) and name it **Jarvis Search**.
-2. In its options, turn **Control Home Assistant off** and turn **Enable Google Search tool on**.
-3. Note its entity ID, e.g. `conversation.jarvis_search`, and put it in `jarvis_package.yaml`
-   (line marked `# <-- CHANGE`).
+1. On the Google Generative AI integration, click **Add conversation agent** and name it **Jarvis Search**.
+2. In its options, turn **Control Home Assistant off** and **Enable Google Search tool on**.
+3. Note its entity ID (e.g. `conversation.jarvis_search`) and put it in `jarvis_package.yaml` on the
+   line marked `# <-- CHANGE`.
 
-If your Home Assistant version doesn't show the Google Search option, skip this. Jarvis then answers
-from Gemini's own knowledge.
+If your version has no Google Search option, skip this. Jarvis then answers from Gemini's own knowledge.
 
-## Step 3: The "Jarvis" assistant
+## Step 4: The "Jarvis" assistant
 
 Go to **Settings → Voice assistants → Add assistant**:
 
@@ -182,111 +165,86 @@ Go to **Settings → Voice assistants → Add assistant**:
 | Name | Jarvis |
 | Language | English |
 | Conversation agent | Google Generative AI (the one with Assist control) |
-| Prefer handling commands locally | **On**, so "turn on the lights" is instant and free |
+| Prefer handling commands locally | **On**, so "lights off" is instant and stays local |
 | Speech-to-text | faster-whisper |
 | Text-to-speech | piper, voice `en_GB-alan-medium` |
 
 Star it as the **preferred** assistant.
 
-## Step 4: Jarvis tools package
+## Step 5: The Jarvis tools
 
-1. In Home Assistant, install the **File editor** or **Studio Code Server** add-on.
-2. Add this to `/config/configuration.yaml`, if it isn't there already:
+1. Install the **Studio Code Server** or **File editor** add-on.
+2. Add to `/config/configuration.yaml`:
    ```yaml
    homeassistant:
      packages: !include_dir_named packages
    ```
-3. Copy `homeassistant/jarvis_package.yaml` to `/config/packages/jarvis_package.yaml`.
-4. Create a token under **Profile → Security → Long-lived access tokens → Create token** (name it
-   "Jarvis"), then add it to `/config/secrets.yaml`:
+3. Copy `homeassistant/jarvis_package.yaml` to `/config/packages/jarvis_package.yaml`, and edit the
+   lines marked `# <-- CHANGE`:
+   - your search agent's entity ID (step 3)
+   - your phone's notify action, e.g. `notify.mobile_app_your_phone`. Install the **Home Assistant
+     Companion app** on your phone so DIY guides reach you there.
+   - your computer's IP (only if you do step 7)
+4. Create a token under **Profile → Security → Long-lived access tokens → Create token** ("Jarvis"),
+   and add it to `/config/secrets.yaml`:
    ```yaml
    jarvis_ha_token: "Bearer PASTE_THE_TOKEN_HERE"
+   jarvis_pc_token: "Bearer PC_AGENT_TOKEN_FROM_STEP_7"   # any placeholder until step 7
    ```
 5. Go to **Developer tools → YAML → Check configuration**, then **Restart**.
-6. **Expose the tools:** **Settings → Voice assistants → Expose → + Expose entities**, then tick the 5
-   `Jarvis ...` scripts. While you're there, expose the lights, switches, climate and media players
-   you want Jarvis to control.
+6. **Expose them:** **Settings → Voice assistants → Expose → + Expose entities**, then tick all
+   `Jarvis ...` scripts, plus the lights, switches, climate and media players Jarvis may control.
 
-> **Safety:** Jarvis can only touch what you expose. New automations always start with
-> **[Jarvis]**, so you can find and delete them under Settings → Automations. Jarvis asks before
-> creating one. ESPHome configs are only *sent to you*; you decide whether to install them.
+> **Safety:** Jarvis can only touch what you expose. Automations it creates start with
+> **[Jarvis]**, so you can find and delete them easily, and it asks before creating them.
+> ESPHome configs and guides are only *sent to you*; you decide what to build and install.
 
-## Step 5: Flash the display
+## Step 6: Flash the display
 
-1. Install the **ESPHome Device Builder** add-on on the Pi.
+1. Install the **ESPHome Device Builder** add-on.
 2. Copy `jarvis.yaml`, `jarvis_face.h` and the `sounds` folder into `/config/esphome/`.
-   The first build takes 10-20 minutes on the Pi 5. Later builds are much quicker.
-3. Put your Wi-Fi details in the ESPHome **Secrets** (top-right menu), following
+3. In ESPHome's **Secrets** (top-right menu), add your Wi-Fi details and keys, following
    `secrets.example.yaml`.
-4. First flash over USB: connect the display to the computer running your browser, using the
-   **Full-speed Type-C** port (#7), then **Install → Plug into this computer**.
-   Later updates go over Wi-Fi.
+4. Connect the display to your computer with USB-C (the **Full-speed Type-C** port, #7). In the
+   ESPHome dashboard (open it from that computer), click **Jarvis → Install → Plug into this computer**.
+   The first build takes 10-20 minutes on the Pi 5. Later updates go over Wi-Fi.
 5. Home Assistant discovers **Jarvis**. Click **Configure**.
-6. Open the device page (**Settings → Devices → Jarvis**):
-   - **Assistant:** Jarvis
-   - Allow the device to perform Home Assistant actions: not needed
-   - Try the **Face Mood** dropdown and watch the eyes change.
+6. On the device page (**Settings → Devices → Jarvis**), set **Assistant** to *Jarvis*. Try the
+   **Face Mood** dropdown to see the eyes react.
 
-## Step 6: Give Jarvis an eye (camera)
+Say **"Hey Jarvis, what can you do?"**
 
-The display's built-in camera can't be used yet: ESPHome doesn't support this kind of camera (MIPI-CSI)
-on the ESP32-P4. Use one of these and mount it next to the display:
+## Step 7 (optional): Let Jarvis use your computer
 
-**A) Your Raspberry Pi Zero 2 W (or the now-free Pi 4) + Camera Module 3 (about 10 OMR)**
-1. Flash **Raspberry Pi OS Lite (64-bit)** and plug in the camera.
-2. Download **MediaMTX** for `linux_arm64` from https://github.com/bluenviron/mediamtx/releases,
-   and merge the `paths:` section from `camera-pi-zero/mediamtx.yml` into its `mediamtx.yml`.
-3. Run it (or install it as a service, as described in the MediaMTX README).
-4. In Home Assistant, go to **Add integration → Generic Camera**, set the stream to
-   `rtsp://<zero-ip>:8554/jarvis_eye`, and name the camera **jarvis_eye**.
+Run the small **Jarvis PC agent** on your computer. Jarvis can then hand it tasks, for example
+"write a script", "summarise the PDFs in my work folder", "draft an email to my landlord", and it
+announces the result when it's done. It uses **Gemini CLI (free)** or **Claude Code**.
 
-**B) An ESP32-S3 camera board (about 4 OMR):** flash it with ESPHome's `esp32_camera` component and
-name the camera `jarvis_eye`.
-
-Then make sure `camera_entity` in `jarvis_package.yaml` matches, e.g. `camera.jarvis_eye`.
-
-Try: *"Hey Jarvis, what am I holding?"* or *"Hey Jarvis, read this label."*
+Full setup and safety notes: [`pc-agent/README.md`](pc-agent/README.md)
 
 ---
-
-## Things to say
-
-| You say | Jarvis does |
-|---|---|
-| "Turn off all the lights" | Controls devices instantly, handled locally |
-| "Set a timer for 10 minutes" | Starts a timer on the display; it beeps and the face reacts when done |
-| "What's the weather tomorrow?" | Uses your Home Assistant weather entity |
-| "Who won the match last night?" | Web search |
-| "What is this?" | Takes a photo and describes it |
-| "Turn on the porch light every day at sunset" | Explains it, asks "Shall I create it?", then creates the automation |
-| "Make me an ESPHome config for a DHT22 on an ESP32, pin 4" | Sends the full YAML and wiring notes to Home Assistant |
-| "Add milk to the shopping list" | Built-in to-do list |
-| "Explain how transformers work in AI" | General knowledge |
-
-Tap the face to talk without the wake word. Tap again to stop. Tap a ringing timer to silence it.
 
 ## Troubleshooting
 
 | Problem | Fix |
 |---------|-----|
-| Won't boot; log says `chip revision: v1.x` | Add `engineering_sample: true` under `esp32:` |
-| No Wi-Fi | The ESP32-C6 Wi-Fi chip may need a firmware update (see the `esp32_hosted` docs), or use Ethernet |
+| Won't boot; log says `chip revision: v1.x` | Add `engineering_sample: true` under `esp32:` in `jarvis.yaml` |
+| No Wi-Fi | The ESP32-C6 Wi-Fi chip may need a firmware update (see the `esp32_hosted` docs), or use the Ethernet port |
 | Eyes stay grey ("Waiting for Home Assistant") | The device isn't adopted yet, or the API key doesn't match |
-| Face never shows moods | The `Jarvis set mood` script isn't exposed, or the instructions are missing. Jarvis still guesses a mood from its reply |
-| "Jarvis look" fails | Check the camera entity name, and that Google's AI Task entity is the default |
-| Automation not created | Check `jarvis_ha_token` starts with `Bearer `. If your Home Assistant uses SSL, change the URL in the package to `https://` |
-| Slow answers | Use Whisper `base-int8` and a Gemini **Flash** model. Check the Pi 5 isn't overheating (Settings → System → Hardware) |
-| Pi 5 reboots randomly | Use the official 27 W power supply. The SSD needs the extra power |
-| Animation is choppy | Lower `GLOW` in `jarvis_face.h` (e.g. 0), or set the `interval:` in `jarvis.yaml` to 50ms |
+| Hears you but no reply sound | Check the speaker connector (#3) and the *Speaker Amplifier* switch |
+| Face never shows moods | Expose the *Jarvis set mood* script and check the instructions. Jarvis still guesses a mood from its reply |
+| Automation not created | `jarvis_ha_token` must start with `Bearer `. If Home Assistant uses SSL, change the URL in the package to `https://` |
+| "Could not reach the computer" | Is the PC agent running, is the IP right, and does the firewall allow it on private networks? |
+| Slow answers | Use Whisper `base-int8` and a Gemini **Flash** model. Check the Pi 5 isn't overheating |
+| Pi 5 reboots randomly | Use the official 27 W power supply |
+| Choppy animation | Lower `GLOW` in `jarvis_face.h` to 0, or set the face `interval:` to 50ms |
 | Wake word too sensitive or deaf | Change `mic_gain` in `audio_dac:` (18DB-30DB) |
 
 ## Customising the face
 
-All in `jarvis_face.h`:
-- Eye size and position: `EYE_W`, `EYE_H`, `EYE_SPACING`, `EYE_CY`
-- Colours: `mood_color()`
-- Emotion shapes: `target_shape()`
-- How long an emotion stays after speaking: `EMOTION_HOLD_MS`
+All in `jarvis_face.h`: eye size and position (`EYE_W`, `EYE_H`, `EYE_SPACING`, `EYE_CY`),
+colours (`mood_color()`), emotion shapes (`target_shape()`), and how long an emotion stays
+(`EMOTION_HOLD_MS`).
 
 ## Credits
 

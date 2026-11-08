@@ -8,7 +8,7 @@
 #
 #  Then restart Home Assistant and EXPOSE these scripts to Assist:
 #  Settings -> Voice assistants -> Expose -> + Expose entities -> pick the
-#  five "Jarvis ..." scripts. The AI can only use what is exposed.
+#  "Jarvis ..." scripts. The AI can only use what is exposed.
 #
 #  Things to change for your home are marked  # <-- CHANGE
 # =============================================================================
@@ -34,41 +34,6 @@ script:
       - action: esphome.jarvis_set_mood        # device name "jarvis" + action "set_mood"
         data:
           mood: "{{ mood }}"
-
-  # -------------------------------------------------------------- vision ----
-  jarvis_look:
-    alias: Jarvis look
-    icon: mdi:eye
-    mode: single
-    description: >-
-      Take a photo with Jarvis's camera and answer a question about it. Use this
-      whenever the user asks what you see, what something is, to read text, count
-      things, or to "look at" something. Returns a short description.
-    fields:
-      question:
-        name: Question
-        description: What the user wants to know about the picture, e.g. "What is this object?"
-        required: false
-        selector:
-          text:
-    variables:
-      camera_entity: camera.jarvis_eye                         # <-- CHANGE to your camera
-    sequence:
-      - action: ai_task.generate_data
-        data:
-          task_name: Jarvis vision
-          instructions: >-
-            {{ question if question else 'What is in this picture?' }}
-            Answer in one to three short sentences that sound natural when spoken.
-          attachments:
-            - media_content_id: "media-source://camera/{{ camera_entity }}"
-              media_content_type: image/jpeg
-        response_variable: vision
-      - variables:
-          result:
-            description: "{{ vision.data }}"
-      - stop: Done
-        response_variable: result
 
   # -------------------------------------------------------- automations ----
   jarvis_create_automation:
@@ -165,6 +130,83 @@ script:
       - stop: Done
         response_variable: result
 
+  # -------------------------------------------------------- send a guide ----
+  jarvis_send_guide:
+    alias: Jarvis send guide
+    icon: mdi:book-open-variant
+    mode: queued
+    description: >-
+      Send the user a detailed written answer: step-by-step DIY guides (for
+      example how to build an ESPHome light switch, which parts to buy, wiring,
+      soldering, flashing), long explanations, lists, recipes or code. Use this
+      whenever the full answer is too long to speak. Then say one sentence out
+      loud, e.g. "I've sent the full guide to your phone, sir."
+    fields:
+      title:
+        name: Title
+        description: Short title, e.g. "DIY ESPHome light switch".
+        required: true
+        selector:
+          text:
+      guide:
+        name: Guide
+        description: The full answer in Markdown (headings, numbered steps, parts list, code blocks).
+        required: true
+        selector:
+          text:
+            multiline: true
+    sequence:
+      - action: persistent_notification.create
+        data:
+          title: "Jarvis: {{ title }}"
+          message: "{{ guide }}"
+      # Also push it to your phone (Home Assistant Companion app). Remove these
+      # lines if you don't use the app.
+      - action: notify.notify                                   # <-- CHANGE to notify.mobile_app_<your_phone>
+        continue_on_error: true
+        data:
+          title: "Jarvis: {{ title }}"
+          message: "{{ guide[:900] }}{{ '... (full guide in Home Assistant notifications)' if guide | length > 900 else '' }}"
+      - variables:
+          result:
+            sent: true
+      - stop: Done
+        response_variable: result
+
+  # ------------------------------------------------------- your computer ----
+  jarvis_computer_task:
+    alias: Jarvis computer task
+    icon: mdi:laptop
+    mode: queued
+    description: >-
+      Hand a task to the AI agent running on the user's computer (it can read and
+      write files in its work folder, write code, research, draft documents and
+      more). Use when the user asks you to do something "on my computer", "in
+      Claude" or "in Gemini", or anything that needs files or a real computer.
+      Write the task as a complete, precise instruction. For anything that deletes,
+      sends, buys or publishes something, confirm with the user first. The task runs
+      in the background: tell the user you've started it - you will announce the
+      result when it finishes.
+    fields:
+      task:
+        name: Task
+        description: The full instruction for the computer's AI agent.
+        required: true
+        selector:
+          text:
+            multiline: true
+    sequence:
+      - action: rest_command.jarvis_pc_task
+        data:
+          task: "{{ task }}"
+        response_variable: http
+      - variables:
+          result:
+            started: "{{ http.status == 202 }}"
+            details: "{{ 'The task is running on the computer.' if http.status == 202 else 'Could not reach the computer (HTTP ' ~ http.status ~ '). Is the Jarvis PC agent running?' }}"
+      - stop: Done
+        response_variable: result
+
   # ---------------------------------------------------------- web search ----
   jarvis_web_search:
     alias: Jarvis web search
@@ -198,6 +240,15 @@ script:
 # Profile -> Security -> Long-lived access tokens -> Create, then add to secrets.yaml:
 #   jarvis_ha_token: "Bearer eyJhbGciOi....."
 rest_command:
+  jarvis_pc_task:
+    url: "http://192.168.1.50:8765/task"                         # <-- CHANGE to your computer's IP
+    method: POST
+    headers:
+      Authorization: !secret jarvis_pc_token                     # "Bearer <same token as config.json>"
+      Content-Type: application/json
+    payload: '{{ {"task": task} | to_json }}'
+    timeout: 10
+
   jarvis_save_automation:
     url: "http://127.0.0.1:8123/api/config/automation/config/{{ automation_id }}"  # use https:// if you set up SSL in HA
     method: POST
@@ -206,3 +257,33 @@ rest_command:
       Content-Type: application/json
     payload: "{{ config if config is string else (config | to_json) }}"
     timeout: 20
+
+# When the computer finishes a task: Jarvis says the summary out loud and the full
+# result appears in Home Assistant notifications.
+automation:
+  - id: jarvis_computer_task_done
+    alias: "[Jarvis] Computer task finished"
+    mode: queued
+    triggers:
+      - trigger: webhook
+        webhook_id: jarvis_pc_done
+        allowed_methods: [POST]
+        local_only: true
+    actions:
+      - action: persistent_notification.create
+        data:
+          title: "Jarvis: computer task {{ 'done' if trigger.json.ok else 'failed' }}"
+          message: |
+            **Task:** {{ trigger.json.task }}
+
+            **Result ({{ trigger.json.seconds }} s):**
+
+            {{ trigger.json.output }}
+      - action: assist_satellite.announce
+        continue_on_error: true
+        target:
+          entity_id: assist_satellite.jarvis_assist_satellite     # <-- CHANGE if your entity ID differs
+        data:
+          message: >-
+            {{ 'Sir, the task on your computer is done. ' if trigger.json.ok else 'Sir, the task on your computer ran into a problem. ' }}{{ trigger.json.summary }}
+          preannounce: false
