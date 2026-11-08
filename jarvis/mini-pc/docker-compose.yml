@@ -1,5 +1,6 @@
-# Jarvis "voice" server for the mini PC (Ubuntu/Debian with Docker installed).
-# Runs speech-to-text and text-to-speech locally. Home Assistant on the Pi 4
+# OPTIONAL speed boost: Whisper + Piper on the mini PC (Ubuntu/Debian with Docker).
+# Not needed if you run the Whisper and Piper add-ons on the Pi 5.
+# Runs speech-to-text and text-to-speech locally. Home Assistant
 # connects to these with the Wyoming Protocol integration.
 #
 #   docker compose up -d

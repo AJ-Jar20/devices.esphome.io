@@ -26,17 +26,19 @@ display uses. The display font differs slightly from the preview font.
 ## How it fits together
 
 ```
- Display (ESP32-P4)              Raspberry Pi 4 (Home Assistant OS)        Mini PC (Docker)
- ─────────────────               ──────────────────────────────────        ────────────────
- "Hey Jarvis" wake word   ──▶    Voice pipeline "Jarvis"            ──▶    Whisper  (speech → text)
- mic + speaker                   Brain: Google Gemini (free tier)   ◀──    Piper    (text → voice)
- animated eyes + subtitles ◀──   Jarvis tools (jarvis_package.yaml):
- timers                            • set_mood     → face reacts
-                                   • look         → camera + AI vision
-                                   • create_automation
-                                   • draft_esphome_config
-                                   • web_search
-                                 Your smart devices
+ Display (ESP32-P4)                Raspberry Pi 5 8 GB + NVMe SSD (Home Assistant OS)
+ ─────────────────                 ───────────────────────────────────────────────────
+ "Hey Jarvis" wake word     ──▶    Voice pipeline "Jarvis"
+ mic + speaker                       Whisper add-on  (speech → text, local)
+ animated eyes + subtitles  ◀──      Piper add-on    (text → voice, local)
+ timers                              Brain: Google Gemini (free tier)
+                                   Jarvis tools (jarvis_package.yaml):
+                                     • set_mood     → face reacts
+                                     • look         → camera + AI vision
+                                     • create_automation
+                                     • draft_esphome_config
+                                     • web_search
+                                   Your smart devices
  Camera: Pi Zero 2 W + camera module (or an ESP32-S3 camera board)
 ```
 
@@ -45,17 +47,20 @@ display uses. The display font differs slightly from the preview font.
 | | Where | Why |
 |---|---|---|
 | Wake word, face, timers | Display | Instant and offline |
-| Speech-to-text and voice | **Mini PC** | Runs locally and privately. The i7 is 3-4x faster than the Pi 4 at this |
-| Home Assistant | Pi 4 | Already running, so keep it |
-| **Brain and vision** | Google Gemini, free tier | Writing automations and ESPHome configs and understanding photos needs a big AI model. On your hardware a local model would take 10-30 s per answer and make many mistakes |
+| Home Assistant, speech-to-text, voice | **Pi 5 on the SSD** | One small, quiet box. The Pi 5 is 2-3x faster than the Pi 4, and the SSD makes Home Assistant fast and far more reliable than an SD card |
+| **Brain and vision** | Google Gemini, free tier | Writing automations and ESPHome configs and understanding photos needs a big AI model. No Pi or mini PC can run one at a usable speed |
+
+Your other hardware:
+- **Pi 4:** free once Home Assistant moves to the Pi 5. It can be Jarvis's camera instead of the
+  Zero 2 W, or a spare.
+- **Mini PC:** no longer needed for Jarvis. It's an optional speed boost: run `mini-pc/docker-compose.yml`
+  on it for faster, more accurate speech-to-text.
+- **Pico:** not needed here. Keep it for sensors.
+- **Zero 2 W:** Jarvis's camera, see step 6.
 
 **What about fully offline?** It's possible later. You'd need a desktop with an NVIDIA GPU, such as
 a used RTX 3060 12 GB, running Ollama with a ~14B model and a vision model. Switching over means
-changing two dropdowns in Home Assistant; nothing on the display changes. An optional slow
-"private mode" is in `mini-pc/docker-compose.yml`.
-
-**Pico and Zero 2 W:** the display's ESP32-P4 is far more powerful than a Pico, so the Pico isn't
-needed here (keep it for sensors). The **Zero 2 W is useful as Jarvis's camera**, see step 6.
+changing two dropdowns in Home Assistant; nothing on the display changes.
 
 ## Files
 
@@ -66,24 +71,62 @@ needed here (keep it for sensors). The **Zero 2 W is useful as Jarvis's camera**
 | `sounds/timer.wav` | Timer alarm |
 | `secrets.example.yaml` | Copy to `secrets.yaml` and fill in your Wi-Fi details |
 | `homeassistant/jarvis_package.yaml` | The Jarvis tools for Home Assistant |
-| `mini-pc/docker-compose.yml` | Whisper and Piper for the mini PC |
+| `mini-pc/docker-compose.yml` | Optional: faster Whisper and Piper on the mini PC |
 | `camera-pi-zero/mediamtx.yml` | Turns a Pi Zero 2 W into a network camera |
 
 ---
 
-## Step 1: Voice server on the mini PC
+## Step 0: Move Home Assistant to the Pi 5 + SSD
 
-1. Install **Ubuntu Server 24.04** (or any Linux) on the mini PC, then Docker:
-   `curl -fsSL https://get.docker.com | sh`
-2. Copy the `mini-pc` folder to it and run `docker compose up -d` inside that folder.
-   The first start downloads the models, which takes a few minutes.
-3. In Home Assistant, go to **Settings → Devices & services → Add integration → Wyoming Protocol**:
-   - host `<mini-PC-IP>`, port `10300` gives **Whisper**
-   - add it again with port `10200`, which gives **Piper**
+You keep all your devices, automations and settings: you take a backup on the Pi 4 and restore
+it on the Pi 5.
 
-> Give the mini PC a fixed IP in your router so Home Assistant always finds it.
-> If you want to skip the mini PC, install the **Whisper** (model `base-int8`) and **Piper** add-ons
-> on the Pi 4 instead. That works, just a few seconds slower.
+**Hardware**
+- Fit the SSD HAT and the NVMe SSD, and use the **official 27 W USB-C power supply**. The Pi 5 plus
+  an SSD can be unstable on weaker chargers.
+- Fit a cooler (the official Active Cooler, or the fan in your case). Speech-to-text works the CPU hard.
+
+**1. Back up the Pi 4**
+1. **Settings → System → Backups → Backup now**, choosing a **full backup**.
+2. Click the backup, **Download**, and keep the `.tar` file and its **encryption key** on your PC.
+
+**2. Install Home Assistant OS on the SSD**
+
+Pick whichever is easier:
+- **A) With a USB NVMe adapter:** plug the SSD into your PC and open **Raspberry Pi Imager**.
+  Choose Device: *Raspberry Pi 5*, then OS: *Other specific-purpose OS → Home assistants and home
+  automation → Home Assistant → Home Assistant OS (RPi 5)*, then Storage: the SSD. Write it, then
+  fit the SSD back in the HAT.
+- **B) Without an adapter:** write **Raspberry Pi OS** to a microSD card, boot the Pi 5 from it,
+  open Raspberry Pi Imager *on the Pi*, and write Home Assistant OS (RPi 5) to the SSD as above.
+  Then shut down and **remove the SD card**.
+
+If the Pi 5 won't boot from the SSD: boot Raspberry Pi OS from the SD card, run `sudo raspi-config`,
+choose **Advanced Options → Boot Order → NVMe/USB Boot**, and update the bootloader when it asks.
+
+**3. Restore**
+1. Shut down the Pi 4 so the two don't clash on the network.
+2. Boot the Pi 5 with an Ethernet cable, open `http://homeassistant.local:8123`, wait for it to
+   finish preparing, then choose **Upload backup / Restore from backup**. Pick the `.tar` file and
+   enter its key.
+3. After the restore, everything comes back: devices, add-ons, automations. If you use a fixed IP
+   reservation for Home Assistant in your router, move it to the Pi 5's network address.
+
+## Step 1: Speech-to-text and voice (add-ons on the Pi 5)
+
+**Settings → Add-ons → Add-on store**, then install and start:
+
+1. **Whisper.** In Configuration, set the language to `en` and the model to `base-int8`
+   (fast, about 1-2 s on a Pi 5). If it mishears you often, try `small-int8` (more accurate,
+   roughly twice as slow).
+2. **Piper.** Voice `en_GB-alan-medium` (British, butler-like).
+
+Both show up under **Settings → Devices & services** as discovered **Wyoming** integrations; click
+**Configure** on each.
+
+> **Optional speed boost with the mini PC:** run `mini-pc/docker-compose.yml` on it (Ubuntu +
+> Docker, `docker compose up -d`) and add it with **Add integration → Wyoming Protocol**:
+> `<mini-PC-IP>` port `10300`. Then pick it as the speech-to-text in step 3. You don't need it.
 
 ## Step 2: Gemini brain (free)
 
@@ -140,7 +183,7 @@ Go to **Settings → Voice assistants → Add assistant**:
 | Language | English |
 | Conversation agent | Google Generative AI (the one with Assist control) |
 | Prefer handling commands locally | **On**, so "turn on the lights" is instant and free |
-| Speech-to-text | faster-whisper (mini PC) |
+| Speech-to-text | faster-whisper |
 | Text-to-speech | piper, voice `en_GB-alan-medium` |
 
 Star it as the **preferred** assistant.
@@ -172,6 +215,7 @@ Star it as the **preferred** assistant.
 
 1. Install the **ESPHome Device Builder** add-on on the Pi.
 2. Copy `jarvis.yaml`, `jarvis_face.h` and the `sounds` folder into `/config/esphome/`.
+   The first build takes 10-20 minutes on the Pi 5. Later builds are much quicker.
 3. Put your Wi-Fi details in the ESPHome **Secrets** (top-right menu), following
    `secrets.example.yaml`.
 4. First flash over USB: connect the display to the computer running your browser, using the
@@ -188,7 +232,7 @@ Star it as the **preferred** assistant.
 The display's built-in camera can't be used yet: ESPHome doesn't support this kind of camera (MIPI-CSI)
 on the ESP32-P4. Use one of these and mount it next to the display:
 
-**A) Your Raspberry Pi Zero 2 W + Camera Module 3 (about 10 OMR)**
+**A) Your Raspberry Pi Zero 2 W (or the now-free Pi 4) + Camera Module 3 (about 10 OMR)**
 1. Flash **Raspberry Pi OS Lite (64-bit)** and plug in the camera.
 2. Download **MediaMTX** for `linux_arm64` from https://github.com/bluenviron/mediamtx/releases,
    and merge the `paths:` section from `camera-pi-zero/mediamtx.yml` into its `mediamtx.yml`.
@@ -231,7 +275,8 @@ Tap the face to talk without the wake word. Tap again to stop. Tap a ringing tim
 | Face never shows moods | The `Jarvis set mood` script isn't exposed, or the instructions are missing. Jarvis still guesses a mood from its reply |
 | "Jarvis look" fails | Check the camera entity name, and that Google's AI Task entity is the default |
 | Automation not created | Check `jarvis_ha_token` starts with `Bearer `. If your Home Assistant uses SSL, change the URL in the package to `https://` |
-| Slow answers | Check that Whisper runs on the mini PC, not the Pi. Use a Gemini **Flash** model |
+| Slow answers | Use Whisper `base-int8` and a Gemini **Flash** model. Check the Pi 5 isn't overheating (Settings → System → Hardware) |
+| Pi 5 reboots randomly | Use the official 27 W power supply. The SSD needs the extra power |
 | Animation is choppy | Lower `GLOW` in `jarvis_face.h` (e.g. 0), or set the `interval:` in `jarvis.yaml` to 50ms |
 | Wake word too sensitive or deaf | Change `mic_gain` in `audio_dac:` (18DB-30DB) |
 
