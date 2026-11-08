@@ -4,7 +4,7 @@
 #
 #  On the device:  "Hey Jarvis" wake word, mic, speaker, animated face, timers
 #  In Home Assistant: speech-to-text, the AI brain, text-to-speech and the
-#  Jarvis tools (moods, camera vision, automations, ESPHome configs).
+#  Jarvis tools (moods, automations, guides, ESPHome configs, computer tasks).
 #  See README.md in this folder.
 #
 #  Hardware base taken from the community config:
