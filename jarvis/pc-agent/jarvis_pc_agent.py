@@ -3,7 +3,7 @@
 Jarvis PC agent - lets Jarvis (Home Assistant) hand tasks to an AI on your computer.
 
   Jarvis -> Home Assistant -> POST http://<this-pc>:8765/task -> runs your AI CLI
-  (Gemini CLI, Claude Code, ...) in a work folder -> reports back to Home Assistant.
+  (Claude Code, Gemini CLI, ...) in a work folder -> reports back to Home Assistant.
 
 Only the Python standard library is used. Works on Windows, macOS and Linux.
 
@@ -55,7 +55,14 @@ def load_config() -> dict:
     cfg.setdefault("host", "0.0.0.0")
     cfg.setdefault("port", 8765)
     cfg.setdefault("timeout_seconds", 900)
-    cfg.setdefault("command", ["gemini", "--approval-mode", "auto_edit", "-p", "{task}"])
+    engines = cfg.setdefault("engines", {})
+    if "command" in cfg:  # older single-engine config
+        engines.setdefault("default", cfg["command"])
+    if not engines:
+        engines["gemini"] = ["gemini", "--approval-mode", "auto_edit", "-p", "{task}"]
+    cfg.setdefault("default_engine", next(iter(engines)))
+    if cfg["default_engine"] not in engines:
+        sys.exit(f"default_engine '{cfg['default_engine']}' is not in 'engines'.")
     cfg.setdefault("callback_url", "")
     return cfg
 
@@ -87,6 +94,7 @@ def notify(cfg: dict, job: dict) -> None:
     body = json.dumps({
         "job_id": job["id"],
         "task": job["task"],
+        "engine": job["engine"],
         "ok": job["ok"],
         "summary": job["summary"],
         "output": job["output"][-3500:],
@@ -104,8 +112,8 @@ def run_job(cfg: dict, job: dict) -> None:
         job["state"] = "running"
         started = time.time()
         try:
-            cmd = build_command(cfg["command"], job["task"] + SUMMARY_HINT)
-            log.info("Job %s: %s", job["id"], job["task"])
+            cmd = build_command(cfg["engines"][job["engine"]], job["task"] + SUMMARY_HINT)
+            log.info("Job %s [%s]: %s", job["id"], job["engine"], job["task"])
             proc = subprocess.run(
                 cmd,
                 cwd=cfg["workdir"],
@@ -156,7 +164,7 @@ class Handler(BaseHTTPRequestHandler):
                 job = jobs.get(self.path.rsplit("/", 1)[-1])
             if not job:
                 return self._send(404, {"error": "unknown job"})
-            return self._send(200, {k: job[k] for k in ("id", "state", "ok", "summary", "seconds")})
+            return self._send(200, {k: job[k] for k in ("id", "engine", "state", "ok", "summary", "seconds")})
         self._send(404, {"error": "not found"})
 
     def do_POST(self) -> None:  # noqa: N802
@@ -168,16 +176,22 @@ class Handler(BaseHTTPRequestHandler):
             length = min(int(self.headers.get("Content-Length", 0)), 20000)
             body = json.loads(self.rfile.read(length) or b"{}")
             task = str(body.get("task", "")).strip()
-        except (ValueError, json.JSONDecodeError):
+            engine = str(body.get("engine") or "").strip().lower()
+        except (ValueError, json.JSONDecodeError, AttributeError):
             return self._send(400, {"error": "invalid JSON"})
         if not task:
             return self._send(400, {"error": "missing 'task'"})
-        job = {"id": uuid.uuid4().hex[:8], "task": task, "state": "queued",
+        if engine in ("", "auto", "default"):
+            engine = self.cfg["default_engine"]
+        if engine not in self.cfg["engines"]:
+            return self._send(400, {"error": f"unknown engine '{engine}'",
+                                    "engines": list(self.cfg["engines"])})
+        job = {"id": uuid.uuid4().hex[:8], "task": task, "engine": engine, "state": "queued",
                "ok": None, "summary": "", "output": "", "seconds": 0}
         with jobs_lock:
             jobs[job["id"]] = job
         threading.Thread(target=run_job, args=(self.cfg, job), daemon=True).start()
-        self._send(202, {"job_id": job["id"], "state": "queued"})
+        self._send(202, {"job_id": job["id"], "engine": engine, "state": "queued"})
 
     def log_message(self, fmt: str, *args) -> None:
         log.debug("%s - %s", self.address_string(), fmt % args)
@@ -193,7 +207,8 @@ def main() -> None:
     Handler.cfg = cfg
     server = ThreadingHTTPServer((cfg["host"], int(cfg["port"])), Handler)
     log.info("Jarvis PC agent listening on %s:%s, work folder %s", cfg["host"], cfg["port"], cfg["workdir"])
-    log.info("AI command: %s", " ".join(cfg["command"]))
+    for name, cmd in cfg["engines"].items():
+        log.info("Engine %-8s%s %s", name, " (default)" if name == cfg["default_engine"] else "", " ".join(cmd))
     try:
         server.serve_forever()
     except KeyboardInterrupt:

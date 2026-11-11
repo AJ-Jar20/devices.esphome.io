@@ -179,10 +179,13 @@ script:
     icon: mdi:laptop
     mode: queued
     description: >-
-      Hand a task to the AI agent running on the user's computer (it can read and
-      write files in its work folder, write code, research, draft documents and
-      more). Use when the user asks you to do something "on my computer", "in
-      Claude" or "in Gemini", or anything that needs files or a real computer.
+      Hand a task to an AI agent on the user's Mac mini (it can read and write
+      files in its work folder, write code, research, draft documents and more).
+      Use when the user asks you to do something "on my Mac/computer", "in Claude"
+      or "in Gemini", or anything that needs files or a real computer.
+      Engine: "claude" (Claude Code) when the user says Claude, or for coding and
+      complex multi-step work; "gemini" (Gemini CLI, free) when the user says
+      Gemini or for everything else.
       Write the task as a complete, precise instruction. For anything that deletes,
       sends, buys or publishes something, confirm with the user first. The task runs
       in the background: tell the user you've started it - you will announce the
@@ -195,10 +198,19 @@ script:
         selector:
           text:
             multiline: true
+      engine:
+        name: Engine
+        description: Which AI on the Mac runs the task.
+        required: false
+        default: gemini
+        selector:
+          select:
+            options: [gemini, claude]
     sequence:
       - action: rest_command.jarvis_pc_task
         data:
           task: "{{ task }}"
+          engine: "{{ engine | default('gemini') }}"
         response_variable: http
       - variables:
           result:
@@ -241,12 +253,12 @@ script:
 #   jarvis_ha_token: "Bearer eyJhbGciOi....."
 rest_command:
   jarvis_pc_task:
-    url: "http://192.168.1.50:8765/task"                         # <-- CHANGE to your computer's IP
+    url: "http://192.168.1.50:8765/task"                         # <-- CHANGE to your Mac mini's IP
     method: POST
     headers:
       Authorization: !secret jarvis_pc_token                     # "Bearer <same token as config.json>"
       Content-Type: application/json
-    payload: '{{ {"task": task} | to_json }}'
+    payload: '{{ {"task": task, "engine": engine} | to_json }}'
     timeout: 10
 
   jarvis_save_automation:
@@ -274,7 +286,7 @@ automation:
         data:
           title: "Jarvis: computer task {{ 'done' if trigger.json.ok else 'failed' }}"
           message: |
-            **Task:** {{ trigger.json.task }}
+            **Task ({{ trigger.json.engine | default('') }}):** {{ trigger.json.task }}
 
             **Result ({{ trigger.json.seconds }} s):**
 
@@ -285,5 +297,5 @@ automation:
           entity_id: assist_satellite.jarvis_assist_satellite     # <-- CHANGE if your entity ID differs
         data:
           message: >-
-            {{ 'Sir, the task on your computer is done. ' if trigger.json.ok else 'Sir, the task on your computer ran into a problem. ' }}{{ trigger.json.summary }}
+            {{ 'Sir, ' ~ (trigger.json.engine | default('the computer') | title) ~ ' has finished the task. ' if trigger.json.ok else 'Sir, the task on your Mac ran into a problem. ' }}{{ trigger.json.summary }}
           preannounce: false

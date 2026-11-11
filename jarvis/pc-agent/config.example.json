@@ -3,6 +3,10 @@
   "workdir": "~/JarvisWork",
   "port": 8765,
   "timeout_seconds": 900,
-  "command": ["gemini", "--approval-mode", "auto_edit", "-p", "{task}"],
+  "default_engine": "gemini",
+  "engines": {
+    "gemini": ["gemini", "--approval-mode", "auto_edit", "-p", "{task}"],
+    "claude": ["claude", "-p", "{task}", "--permission-mode", "acceptEdits"]
+  },
   "callback_url": "http://192.168.1.40:8123/api/webhook/jarvis_pc_done"
 }

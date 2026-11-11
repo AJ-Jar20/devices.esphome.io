@@ -5,36 +5,35 @@ Jarvis passes the task to an AI coding agent on your computer, the agent does th
 folder, and Jarvis **announces the result** when it's done. The full output appears in Home Assistant.
 
 ```
-"Hey Jarvis..." ─▶ Home Assistant (Pi 5) ─▶ jarvis_pc_agent.py (your PC) ─▶ Gemini CLI / Claude Code
+"Hey Jarvis..." ─▶ Home Assistant (Pi 4) ─▶ jarvis_pc_agent.py (Mac mini) ─▶ Claude Code or Gemini CLI
                          ▲                                                          │
                          └──────────── result: spoken summary + notification ◀──────┘
 ```
 
-## Which AI runs the tasks?
+## Two engines, side by side
 
-| Engine | Cost | Notes |
+| Engine | Used when | Cost |
 |---|---|---|
-| **Gemini CLI** (default) | **Free** with a personal Google account (daily limits) | `npm install -g @google/gemini-cli`, then run `gemini` once to sign in |
-| **Claude Code** | Needs a Claude Pro/Max subscription or API credits | `npm install -g @anthropic-ai/claude-code`, then run `claude` once to sign in |
-| Any other CLI | - | Anything that takes the task as an argument and prints the answer |
+| **Claude Code** | You say "Claude", or for coding and complex multi-step work | Needs a Claude Pro/Max subscription (or API credits) |
+| **Gemini CLI** | Everything else (the default) | **Free** with a personal Google account (daily limits) |
 
-Both need Node.js, which the Homebrew step below installs.
+Jarvis picks the engine for each task. You can also just say it: *"Ask Claude to…"* or *"Use Gemini to…"*.
 
 ## Setup on your Mac mini (about 10 minutes)
 
 1. Install **Homebrew** (https://brew.sh), then run in Terminal:
    ```bash
    brew install node python
-   npm install -g @google/gemini-cli      # free engine
-   gemini                                  # sign in with your Google account once, then /quit
+   npm install -g @google/gemini-cli @anthropic-ai/claude-code
+   gemini      # sign in with your Google account once, then type /quit
+   claude      # sign in with your Claude account once, then type /exit
    ```
-   Optional, if you have a Claude subscription: `npm install -g @anthropic-ai/claude-code`, then run `claude` once to sign in.
 2. Copy this `pc-agent` folder to your home folder, so it's at `~/pc-agent`.
 3. `cd ~/pc-agent && cp config.example.json config.json`, then edit `config.json`:
    - `token`: a long random password, from
      `python3 -c "import secrets; print(secrets.token_urlsafe(32))"`
    - `workdir`: the folder the AI may work in (default `~/JarvisWork`)
-   - `command`: the engine (see below)
+   - `engines` / `default_engine`: both engines are already set up (see below)
    - `callback_url`: `http://<Pi-4-IP>:8123/api/webhook/jarvis_pc_done`
 4. Test it: `python3 jarvis_pc_agent.py`. You should see `listening on 0.0.0.0:8765`.
    When macOS asks *"Allow incoming network connections?"*, click **Allow**.
@@ -51,20 +50,20 @@ Both need Node.js, which the Homebrew step below installs.
      Give the Mac a fixed IP in your router.
    - Restart Home Assistant and expose the **Jarvis computer task** script to Assist.
 
-### Engine commands for `config.json`
+### Engines in `config.json`
 
-Gemini CLI. It can create and edit files in the work folder, but it can't run shell commands:
 ```json
-"command": ["gemini", "--approval-mode", "auto_edit", "-p", "{task}"]
+"default_engine": "gemini",
+"engines": {
+  "gemini": ["gemini", "--approval-mode", "auto_edit", "-p", "{task}"],
+  "claude": ["claude", "-p", "{task}", "--permission-mode", "acceptEdits"]
+}
 ```
 
-Claude Code. Same idea: edits allowed, nothing else without permission:
-```json
-"command": ["claude", "-p", "{task}", "--permission-mode", "acceptEdits"]
-```
-
-`{task}` is replaced by what Jarvis asks for. Flag names can change between versions; check
-`gemini --help` or `claude --help` if a command is refused.
+Both can create and edit files in the work folder, but they can't run other programs without
+permission. `{task}` is replaced by what Jarvis asks for. Flag names can change between versions;
+check `gemini --help` or `claude --help` if a command is refused. No Claude subscription? Delete the
+`claude` line, and Jarvis uses Gemini for everything.
 
 ## Safety
 
@@ -72,7 +71,7 @@ Claude Code. Same idea: edits allowed, nothing else without permission:
 - Keep port 8765 **inside your home network**. Never forward it on your router. (Tailscale is fine, see the main README.)
 - The AI works only inside `workdir`, and the commands above don't allow running programs or
   deleting outside it. Only loosen that (e.g. Gemini `--approval-mode yolo`) if you fully understand
-  the risk: anyone who can talk to Jarvis could then run commands on your PC.
+  the risk: anyone who can talk to Jarvis could then run commands on your Mac.
 - Jarvis is told to confirm before tasks that delete, send, buy or publish anything.
 - Every task is logged in `jarvis_pc_agent.log`.
 
@@ -80,7 +79,7 @@ Claude Code. Same idea: edits allowed, nothing else without permission:
 
 ```bash
 curl -X POST http://<pc-ip>:8765/task -H "Authorization: Bearer <token>" \
-     -d '{"task": "Create notes.txt with three fun facts about Oman"}'
+     -d '{"task": "Create notes.txt with three fun facts about Oman", "engine": "claude"}'
 ```
 
-This returns `{"job_id": "...", "state": "queued"}`. When the task finishes, Jarvis speaks the summary.
+This returns `{"job_id": "...", "engine": "claude", "state": "queued"}`. When the task finishes, Jarvis speaks the summary.

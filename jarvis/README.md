@@ -6,8 +6,7 @@
 |---|---|
 | **Guition 7" display JC1060P470C_I_W_Y** (ESP32-P4 + ESP32-C6) + speaker | Jarvis's face, ears and voice |
 | **Raspberry Pi 4**, Home Assistant OS (your existing setup, unchanged) | Smart home + Jarvis tools |
-| **Mac mini M4** (16 GB) | Jarvis's local hub: the **voice server** (Whisper large-v3-turbo + Kokoro voice), **runs tasks** for Jarvis (Gemini CLI / Claude Code), an optional private **local AI brain** (Ollama), and lets **Claude work on Home Assistant** |
-| **Raspberry Pi 5** (8 GB) + SSD (optional) | **Backup voice server** for when the Mac is off |
+| **Mac mini M4** (16 GB), always on | Jarvis's local hub: 1) **voice server** (Whisper large-v3-turbo + Kokoro voice), 2) **runs tasks** for Jarvis with **Claude Code and Gemini CLI**, 3) private **local AI brain** (Ollama), 4) lets **Claude work on Home Assistant** |
 
 Say **"Hey Jarvis"**. The eyes on the display wake up, listen, think and react with emotions while
 Jarvis answers.
@@ -28,7 +27,8 @@ Jarvis answers.
 | "Every day at sunset, turn on the porch light" | Explains the automation, asks *"Shall I create it?"*, then **creates it** in Home Assistant |
 | "How do I make a smart light switch with ESPHome?" | Says a short answer and **sends the full step-by-step guide** (parts, wiring, YAML) to your phone and Home Assistant |
 | "Write me an ESPHome config for a DHT22 on GPIO4" | Sends the ready-to-paste config plus wiring notes |
-| "On my Mac, write a script that sorts my downloads" | Hands the task to the AI on your Mac (Gemini CLI or Claude Code), then **announces the result** |
+| "On my Mac, write a script that sorts my downloads" | Hands the task to Gemini CLI on your Mac, then **announces the result** |
+| "Ask Claude to build me a website for my notes" | Hands it to **Claude Code** on your Mac, then announces the result |
 | "Who won the match last night?" / "What's the price of gold?" | Searches the web |
 | "Explain black holes" / any general question | General knowledge |
 | "Set a timer for 10 minutes" | Timer on the display, with an alarm and a surprised face |
@@ -47,12 +47,33 @@ Tap the face to talk without the wake word.
   Either way the wake word, face, speech-to-text, voice and simple commands like "lights off" are local.
 - **No camera for now.** ESPHome can't use the display's camera (MIPI-CSI on the ESP32-P4) yet.
 - **The Mac mini must stay awake.** It does the listening, so if it sleeps Jarvis can't understand
-  you. The guide keeps it awake with the screen off; it idles at a few watts. The optional Pi 5
-  backup covers the times it's off.
-- **Computer tasks** need the Jarvis PC agent running on the Mac. Gemini CLI is free;
-  Claude Code needs a Claude subscription.
+  you. Step 2 keeps it awake with the screen off; it idles at a few watts.
+- **Computer tasks:** Gemini CLI is free. Claude Code needs a Claude subscription (Pro or Max).
 - **Not yet tested on real hardware.** The face has only run in a simulation. The firmware compiles,
   and the previews above are rendered from the real face code with the display's graphics library.
+
+## Setup checklist
+
+Do these in order. Each one links to its detailed step below.
+
+**Mac mini**
+- [ ] Energy settings: never sleep, restart after a power failure, fixed IP (step 2)
+- [ ] Homebrew, then `wyoming-mlx` as the voice server (step 2)
+- [ ] Ollama with `qwen3:8b` as the local brain (step 3B)
+- [ ] Gemini CLI and Claude Code, both signed in, plus the Jarvis PC agent (step 7)
+- [ ] Claude Code connected to Home Assistant over MCP (step 8)
+
+**Home Assistant (Pi 4)**
+- [ ] Wyoming Protocol pointing at the Mac: ports 10300 and 10200 (step 2)
+- [ ] Google Generative AI with a free key, plus the Jarvis Search agent (step 3A)
+- [ ] Ollama integration pointing at the Mac (step 3B)
+- [ ] The "Jarvis" assistant (step 4)
+- [ ] The `jarvis_package.yaml` tools, tokens and exposed entities (step 5)
+- [ ] Tailscale for remote access (step 8)
+
+**Display**
+- [ ] Flash `jarvis.yaml` from the Mac with ESPHome (step 6)
+- [ ] Set its Assistant to "Jarvis" and say *"Hey Jarvis, what can you do?"*
 
 ## How it fits together
 
@@ -66,12 +87,11 @@ Tap the face to talk without the wake word.
                                 set mood · create automation
                                 send guide · ESPHome config
                                 web search
-                                computer task ───────────────────▶ PC agent → Gemini CLI / Claude Code
+                                computer task ───────────────────▶ PC agent → Claude Code or Gemini CLI
                               Your smart devices
                                      ▲
                                      └────────── MCP ───────────── Claude Desktop / Claude Code
 
-                              Pi 5 (optional): backup voice server (Whisper base + Piper)
 ```
 
 ## Files
@@ -83,7 +103,6 @@ Tap the face to talk without the wake word.
 | `sounds/timer.wav` | Timer alarm |
 | `secrets.example.yaml` | Template for your Wi-Fi details |
 | `homeassistant/jarvis_package.yaml` | The Jarvis tools for Home Assistant |
-| `pi5-voice/docker-compose.yml` | Optional backup voice server for the Pi 5 |
 | `pc-agent/` | The agent for your Mac, with its own README |
 
 ---
@@ -118,23 +137,6 @@ The Mac mini does the listening and speaking with **wyoming-mlx**. It runs Whisp
 > wyoming-mlx is a young community project (first released in June 2026). If an install step has
 > changed, its page on PyPI (`wyoming-mlx`) has the current instructions.
 
-### Optional: backup voice server on the Pi 5
-
-So Jarvis still understands you when the Mac is off or restarting:
-
-1. Write **Raspberry Pi OS Lite (64-bit)** to the Pi 5's SSD with Raspberry Pi Imager, with
-   **SSH** enabled. If it won't boot from the SSD: boot from a microSD card, run `sudo raspi-config` →
-   **Advanced Options → Boot Order → NVMe/USB Boot**.
-2. From the Mac:
-   ```bash
-   ssh <user>@<pi5-ip> 'curl -fsSL https://get.docker.com | sh && sudo usermod -aG docker $USER'
-   scp -r pi5-voice <user>@<pi5-ip>:~
-   ssh <user>@<pi5-ip> 'cd ~/pi5-voice && sudo docker compose up -d'
-   ```
-3. Add it in Home Assistant with **Wyoming Protocol** as above (`<pi5-ip>`, ports `10300` and `10200`).
-4. In step 4, create a second assistant, **"Jarvis (backup)"**, that uses the Pi 5's speech-to-text
-   and Piper. If the Mac is off, switch the display to it on its device page.
-
 ## Step 3: Jarvis's brain
 
 ### Option A: Google Gemini (free, recommended to start)
@@ -166,8 +168,9 @@ Tools:
   ESPHome syntax. Never read YAML aloud.
 - "Jarvis create automation": when asked to automate something. FIRST explain in one sentence
   what it will do and ask "Shall I create it?". Only call the tool after the user says yes.
-- "Jarvis computer task": when asked to do something on the user's computer, in Claude or in
-  Gemini, or anything that needs files. Confirm first if it deletes, sends, buys or publishes.
+- "Jarvis computer task": when asked to do something on the user's Mac, in Claude or in Gemini,
+  or anything that needs files. Use engine "claude" when the user says Claude or for coding and
+  complex work, otherwise "gemini". Confirm first if it deletes, sends, buys or publishes.
   Then say the task has started; the result is announced when it finishes.
 - Timers, shopping list and to-do lists: use the built-in tools.
 ```
@@ -247,15 +250,19 @@ Star it as the **preferred** assistant.
 
 ## Step 6: Flash the display
 
-1. Install the **ESPHome Device Builder** add-on.
-2. Copy `jarvis.yaml`, `jarvis_face.h` and the `sounds` folder into `/config/esphome/`.
-3. In ESPHome's **Secrets** (top-right menu), add your Wi-Fi details and keys, following
-   `secrets.example.yaml`.
-4. Connect the display to your computer with USB-C (the **Full-speed Type-C** port, #7). In the
-   ESPHome dashboard (open it from that computer), click **Jarvis → Install → Plug into this computer**.
-   The first build takes 20-40 minutes on a Pi 4. Later builds are quicker, and updates go over Wi-Fi.
-   (Faster: install ESPHome on the Mac with `brew install esphome` and run `esphome run jarvis.yaml`
-   there with the display plugged into the Mac.)
+The quickest way is from the Mac mini:
+
+1. `brew install esphome`
+2. Copy the `jarvis` folder to the Mac, then `cp secrets.example.yaml secrets.yaml` and fill in your
+   Wi-Fi details. Generate the API key with `openssl rand -base64 32`.
+3. Connect the display to the Mac with USB-C (the **Full-speed Type-C** port, #7), then:
+   ```bash
+   cd jarvis && esphome run jarvis.yaml
+   ```
+   Choose the USB port when asked. The first build takes about 5-10 minutes on the M4.
+4. Prefer to do it in Home Assistant? Use the **ESPHome Device Builder** add-on instead: copy
+   `jarvis.yaml`, `jarvis_face.h` and `sounds/` into `/config/esphome/` and use **Install**. The first
+   build takes 20-40 minutes on the Pi 4.
 5. Home Assistant discovers **Jarvis**. Click **Configure**.
 6. On the device page (**Settings → Devices → Jarvis**), set **Assistant** to *Jarvis*. Try the
    **Face Mood** dropdown to see the eyes react.
@@ -266,7 +273,8 @@ Say **"Hey Jarvis, what can you do?"**
 
 Run the small **Jarvis PC agent** on the Mac mini. Jarvis can then hand it tasks, for example
 "write a script", "summarise the PDFs in my work folder", "draft an email to my landlord", and it
-announces the result when it's done. It uses **Gemini CLI (free)** or **Claude Code**.
+announces the result when it's done. Both engines are set up side by side:
+**Claude Code** (when you say "Claude", or for coding) and **Gemini CLI** (free, everything else).
 
 Full setup (Homebrew, auto-start, keeping the Mac awake) and safety notes:
 [`pc-agent/README.md`](pc-agent/README.md)
@@ -312,11 +320,10 @@ the `config` folder with Claude Code. Back up first (**Settings → System → B
 | Hears you but no reply sound | Check the speaker connector (#3) and the *Speaker Amplifier* switch |
 | Face never shows moods | Expose the *Jarvis set mood* script and check the instructions. Jarvis still guesses a mood from its reply |
 | Automation not created | `jarvis_ha_token` must start with `Bearer `. If Home Assistant uses SSL, change the URL in the package to `https://` |
-| "Could not reach the computer" | Is the Mac awake, is the PC agent running (`launchctl list | grep jarvis`), and is the IP right? |
+| "Could not reach the computer" | Is the PC agent running (`launchctl list | grep jarvis`), and is the Mac's IP right? |
 | Slow answers | Check the assistant uses the Mac's speech-to-text, and use a Gemini **Flash** model. On the local brain, try a smaller model like `qwen3:4b` |
 | Local brain doesn't answer | Is the Mac awake? Does `curl http://<mac-ip>:11434` from another device say *Ollama is running*? |
 | Jarvis stopped understanding speech | Is the Mac awake? Check `brew services list` shows `wyoming-mlx` as *started*, and look at the log in step 2 |
-| Pi 5 reboots randomly | Use the official 27 W power supply |
 | Choppy animation | Lower `GLOW` in `jarvis_face.h` to 0, or set the face `interval:` to 50ms |
 | Wake word too sensitive or deaf | Change `mic_gain` in `audio_dac:` (18DB-30DB) |
 
