@@ -6,8 +6,8 @@
 |---|---|
 | **Guition 7" display JC1060P470C_I_W_Y** (ESP32-P4 + ESP32-C6) + speaker | Jarvis's face, ears and voice |
 | **Raspberry Pi 4**, Home Assistant OS (your existing setup, unchanged) | Smart home + Jarvis tools |
-| **Raspberry Pi 5** (8 GB) + NVMe SSD | Always-on local **voice server**: speech-to-text and text-to-speech |
-| **Mac mini M4** (16 GB) | Runs tasks for Jarvis (Gemini CLI / Claude Code), an optional **local AI brain**, and Claude for working on Home Assistant |
+| **Mac mini M4** (16 GB) | Jarvis's local hub: the **voice server** (Whisper large-v3-turbo + Kokoro voice), **runs tasks** for Jarvis (Gemini CLI / Claude Code), an optional private **local AI brain** (Ollama), and lets **Claude work on Home Assistant** |
+| **Raspberry Pi 5** (8 GB) + SSD (optional) | **Backup voice server** for when the Mac is off |
 
 Say **"Hey Jarvis"**. The eyes on the display wake up, listen, think and react with emotions while
 Jarvis answers.
@@ -46,7 +46,10 @@ Tap the face to talk without the wake word.
 
   Either way the wake word, face, speech-to-text, voice and simple commands like "lights off" are local.
 - **No camera for now.** ESPHome can't use the display's camera (MIPI-CSI on the ESP32-P4) yet.
-- **Computer tasks** need the Mac awake with the Jarvis PC agent running. Gemini CLI is free;
+- **The Mac mini must stay awake.** It does the listening, so if it sleeps Jarvis can't understand
+  you. The guide keeps it awake with the screen off; it idles at a few watts. The optional Pi 5
+  backup covers the times it's off.
+- **Computer tasks** need the Jarvis PC agent running on the Mac. Gemini CLI is free;
   Claude Code needs a Claude subscription.
 - **Not yet tested on real hardware.** The face has only run in a simulation. The firmware compiles,
   and the previews above are rendered from the real face code with the display's graphics library.
@@ -54,19 +57,21 @@ Tap the face to talk without the wake word.
 ## How it fits together
 
 ```
- Display (ESP32-P4)           Pi 4: Home Assistant OS            Pi 5: voice server     Mac mini M4
- ──────────────────           ───────────────────────            ──────────────────     ───────────
- "Hey Jarvis"         ──▶     Voice pipeline "Jarvis"  ◀──────▶  Whisper (speech→text)
- mic + speaker                                                    Piper   (text→voice)
- animated eyes        ◀──     Brain: Gemini (cloud) ─── or ───────────────────────────▶ Ollama (local brain)
+ Display (ESP32-P4)           Pi 4: Home Assistant OS              Mac mini M4 (always awake)
+ ──────────────────           ───────────────────────              ──────────────────────────
+ "Hey Jarvis"         ──▶     Voice pipeline "Jarvis"  ◀────────▶  wyoming-mlx: Whisper large-v3-turbo (speech→text)
+ mic + speaker                                                                  Kokoro (text→voice)
+ animated eyes        ◀──     Brain: Gemini (cloud) ── or ───────▶ Ollama (private local brain)
  timers                       Jarvis tools:
                                 set mood · create automation
                                 send guide · ESPHome config
                                 web search
-                                computer task ────────────────────────────────────────▶ PC agent →
-                              Your smart devices                                          Gemini CLI / Claude Code
+                                computer task ───────────────────▶ PC agent → Gemini CLI / Claude Code
+                              Your smart devices
                                      ▲
-                                     └──── MCP ─────────────────────────────────────────── Claude Desktop / Claude Code
+                                     └────────── MCP ───────────── Claude Desktop / Claude Code
+
+                              Pi 5 (optional): backup voice server (Whisper base + Piper)
 ```
 
 ## Files
@@ -78,7 +83,7 @@ Tap the face to talk without the wake word.
 | `sounds/timer.wav` | Timer alarm |
 | `secrets.example.yaml` | Template for your Wi-Fi details |
 | `homeassistant/jarvis_package.yaml` | The Jarvis tools for Home Assistant |
-| `pi5-voice/docker-compose.yml` | Whisper + Piper for the Pi 5 |
+| `pi5-voice/docker-compose.yml` | Optional backup voice server for the Pi 5 |
 | `pc-agent/` | The agent for your Mac, with its own README |
 
 ---
@@ -88,28 +93,47 @@ Tap the face to talk without the wake word.
 Keep your existing Home Assistant OS on the Pi 4. Just make sure it's up to date
 (**Settings → System → Updates**) and has a **fixed IP** in your router.
 
-## Step 2: Voice server on the Pi 5
+## Step 2: Voice server on the Mac mini
 
-1. Fit the SSD HAT and SSD, plus a cooler, and use the **official 27 W power supply**.
-2. With **Raspberry Pi Imager**, write **Raspberry Pi OS Lite (64-bit)** to the SSD (using a USB
-   NVMe adapter), or to a microSD card first. In Imager's settings, enable **SSH** and set a user
-   name and password.
-   - If it won't boot from the SSD: boot from a microSD card, run `sudo raspi-config` →
-     **Advanced Options → Boot Order → NVMe/USB Boot**.
-3. Give the Pi 5 a fixed IP in your router, then from your Mac:
+The Mac mini does the listening and speaking with **wyoming-mlx**. It runs Whisper
+**large-v3-turbo**, the most accurate Whisper, on the M4's graphics chip, and the natural-sounding
+**Kokoro** voice. It's free and local.
+
+1. **Keep the Mac awake:** go to **System Settings → Energy** and turn on *Prevent automatic sleeping
+   when the display is off*, plus *Start up automatically after a power failure*. Give the Mac a
+   **fixed IP** in your router.
+2. Install Homebrew (https://brew.sh), then in Terminal:
    ```bash
-   ssh <user>@<pi5-ip>
-   curl -fsSL https://get.docker.com | sh
-   sudo usermod -aG docker $USER && exit      # log out and back in after this
+   brew tap rnorth/tap
+   brew install wyoming-mlx
+   brew services start wyoming-mlx      # runs now and at every login
    ```
-4. Copy the `pi5-voice` folder over (`scp -r pi5-voice <user>@<pi5-ip>:~`), then run on the Pi 5:
+   The first start downloads the models (a few GB), which takes a few minutes. Watch progress with
+   `tail -f "$(brew --prefix)/var/log/wyoming-mlx.log"`.
+   When macOS asks to allow incoming connections, click **Allow**.
+3. In Home Assistant on the Pi 4, go to **Settings → Devices & services → Add integration → Wyoming Protocol**:
+   - host `<mac-ip>`, port `10300` gives **speech-to-text** (Whisper)
+   - add it again with port `10200`, which gives **text-to-speech** (Kokoro)
+
+> wyoming-mlx is a young community project (first released in June 2026). If an install step has
+> changed, its page on PyPI (`wyoming-mlx`) has the current instructions.
+
+### Optional: backup voice server on the Pi 5
+
+So Jarvis still understands you when the Mac is off or restarting:
+
+1. Write **Raspberry Pi OS Lite (64-bit)** to the Pi 5's SSD with Raspberry Pi Imager, with
+   **SSH** enabled. If it won't boot from the SSD: boot from a microSD card, run `sudo raspi-config` →
+   **Advanced Options → Boot Order → NVMe/USB Boot**.
+2. From the Mac:
    ```bash
-   cd ~/pi5-voice && docker compose up -d
+   ssh <user>@<pi5-ip> 'curl -fsSL https://get.docker.com | sh && sudo usermod -aG docker $USER'
+   scp -r pi5-voice <user>@<pi5-ip>:~
+   ssh <user>@<pi5-ip> 'cd ~/pi5-voice && sudo docker compose up -d'
    ```
-   The first start downloads the models, which takes a few minutes.
-5. In Home Assistant on the Pi 4, go to **Settings → Devices & services → Add integration → Wyoming Protocol**:
-   - host `<pi5-ip>`, port `10300` gives **Whisper**
-   - add it again with port `10200`, which gives **Piper**
+3. Add it in Home Assistant with **Wyoming Protocol** as above (`<pi5-ip>`, ports `10300` and `10200`).
+4. In step 4, create a second assistant, **"Jarvis (backup)"**, that uses the Pi 5's speech-to-text
+   and Piper. If the Mac is off, switch the display to it on its device page.
 
 ## Step 3: Jarvis's brain
 
@@ -174,7 +198,8 @@ If your version has no Google Search option, skip this. Jarvis then answers from
 4. In step 4, pick this agent instead of Gemini, or create a second assistant ("Jarvis Local") and
    switch between them on the display's device page.
 
-Expect replies in a few seconds. For the best results, keep Gemini for creating automations and DIY
+Memory: Whisper, Kokoro and `qwen3:8b` together use roughly 8 GB, which fits in the Mac's 16 GB
+alongside normal use. Expect replies in a few seconds. For the best results, keep Gemini for creating automations and DIY
 guides and use local mode for everyday chat and control.
 
 ## Step 4: The "Jarvis" assistant
@@ -187,8 +212,8 @@ Go to **Settings → Voice assistants → Add assistant**:
 | Language | English |
 | Conversation agent | Google Generative AI (the one with Assist control) |
 | Prefer handling commands locally | **On**, so "lights off" is instant and stays local |
-| Speech-to-text | faster-whisper (the Pi 5) |
-| Text-to-speech | piper (the Pi 5), voice `en_GB-alan-medium` |
+| Speech-to-text | the Mac's wyoming-mlx (Whisper large-v3-turbo) |
+| Text-to-speech | the Mac's wyoming-mlx (Kokoro). For a British butler voice, pick one starting with **`bm_`** (British male) in the voice list, e.g. `bm_george` or `bm_lewis` |
 
 Star it as the **preferred** assistant.
 
@@ -288,8 +313,9 @@ the `config` folder with Claude Code. Back up first (**Settings → System → B
 | Face never shows moods | Expose the *Jarvis set mood* script and check the instructions. Jarvis still guesses a mood from its reply |
 | Automation not created | `jarvis_ha_token` must start with `Bearer `. If Home Assistant uses SSL, change the URL in the package to `https://` |
 | "Could not reach the computer" | Is the Mac awake, is the PC agent running (`launchctl list | grep jarvis`), and is the IP right? |
-| Slow answers | Check Whisper is the Pi 5 one (`base-int8`) and use a Gemini **Flash** model. On the local brain, try a smaller model like `qwen3:4b` |
+| Slow answers | Check the assistant uses the Mac's speech-to-text, and use a Gemini **Flash** model. On the local brain, try a smaller model like `qwen3:4b` |
 | Local brain doesn't answer | Is the Mac awake? Does `curl http://<mac-ip>:11434` from another device say *Ollama is running*? |
+| Jarvis stopped understanding speech | Is the Mac awake? Check `brew services list` shows `wyoming-mlx` as *started*, and look at the log in step 2 |
 | Pi 5 reboots randomly | Use the official 27 W power supply |
 | Choppy animation | Lower `GLOW` in `jarvis_face.h` to 0, or set the face `interval:` to 50ms |
 | Wake word too sensitive or deaf | Change `mic_gain` in `audio_dac:` (18DB-30DB) |
