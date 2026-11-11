@@ -1,3 +1,4 @@
 secrets.yaml
 .esphome/
 jtest.yaml
+pi5-voice/data/

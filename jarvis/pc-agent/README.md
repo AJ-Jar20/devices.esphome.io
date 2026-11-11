@@ -18,27 +18,37 @@ folder, and Jarvis **announces the result** when it's done. The full output appe
 | **Claude Code** | Needs a Claude Pro/Max subscription or API credits | `npm install -g @anthropic-ai/claude-code`, then run `claude` once to sign in |
 | Any other CLI | - | Anything that takes the task as an argument and prints the answer |
 
-Both need **Node.js 20+** (https://nodejs.org).
+Both need Node.js, which the Homebrew step below installs.
 
-## Setup (about 10 minutes)
+## Setup on your Mac mini (about 10 minutes)
 
-1. Install **Python 3.10+** (https://python.org; on Windows, tick *Add to PATH*).
-2. Install and sign in to one engine from the table above.
-3. Copy this `pc-agent` folder to your computer.
-4. Copy `config.example.json` to `config.json` and edit it:
-   - `token`: a long random password. Generate one with
-     `python -c "import secrets; print(secrets.token_urlsafe(32))"`
-   - `workdir`: the folder the AI is allowed to work in (default `~/JarvisWork`)
+1. Install **Homebrew** (https://brew.sh), then run in Terminal:
+   ```bash
+   brew install node python
+   npm install -g @google/gemini-cli      # free engine
+   gemini                                  # sign in with your Google account once, then /quit
+   ```
+   Optional, if you have a Claude subscription: `npm install -g @anthropic-ai/claude-code`, then run `claude` once to sign in.
+2. Copy this `pc-agent` folder to your home folder, so it's at `~/pc-agent`.
+3. `cd ~/pc-agent && cp config.example.json config.json`, then edit `config.json`:
+   - `token`: a long random password, from
+     `python3 -c "import secrets; print(secrets.token_urlsafe(32))"`
+   - `workdir`: the folder the AI may work in (default `~/JarvisWork`)
    - `command`: the engine (see below)
-   - `callback_url`: your Home Assistant address, ending in `/api/webhook/jarvis_pc_done`
-5. Start it: `python jarvis_pc_agent.py`
-   You should see `Jarvis PC agent listening on 0.0.0.0:8765`.
-6. Allow it through the firewall **on your home network only**. On Windows, click *Allow* on
-   *Private networks* when asked.
-7. In Home Assistant:
+   - `callback_url`: `http://<Pi-4-IP>:8123/api/webhook/jarvis_pc_done`
+4. Test it: `python3 jarvis_pc_agent.py`. You should see `listening on 0.0.0.0:8765`.
+   When macOS asks *"Allow incoming network connections?"*, click **Allow**.
+5. **Keep the Mac awake:** in **System Settings → Energy**, turn on *Prevent automatic sleeping
+   when the display is off*. The screen can still turn off.
+6. **Start automatically:** edit `com.jarvis.pcagent.plist` (replace `YOUR_USER` with the output of `whoami`), then:
+   ```bash
+   cp com.jarvis.pcagent.plist ~/Library/LaunchAgents/
+   launchctl load ~/Library/LaunchAgents/com.jarvis.pcagent.plist
+   ```
+7. In Home Assistant (Pi 4):
    - `/config/secrets.yaml`: `jarvis_pc_token: "Bearer <the same token>"`
-   - In `jarvis_package.yaml`, set the computer's IP on the `jarvis_pc_task` line marked `# <-- CHANGE`.
-     Give the PC a fixed IP in your router.
+   - In `jarvis_package.yaml`, set the Mac's IP on the `jarvis_pc_task` line marked `# <-- CHANGE`.
+     Give the Mac a fixed IP in your router.
    - Restart Home Assistant and expose the **Jarvis computer task** script to Assist.
 
 ### Engine commands for `config.json`
@@ -56,16 +66,10 @@ Claude Code. Same idea: edits allowed, nothing else without permission:
 `{task}` is replaced by what Jarvis asks for. Flag names can change between versions; check
 `gemini --help` or `claude --help` if a command is refused.
 
-### Start automatically
-
-- **Windows:** press Win+R, type `shell:startup`, and put a shortcut there with
-  target `pythonw.exe C:\path\to\jarvis_pc_agent.py`
-- **macOS/Linux:** add `@reboot cd /path/to/pc-agent && python3 jarvis_pc_agent.py` with `crontab -e`
-
 ## Safety
 
 - Every request must carry the token. Without it the agent answers `401` and does nothing.
-- Keep port 8765 **inside your home network**. Never forward it on your router.
+- Keep port 8765 **inside your home network**. Never forward it on your router. (Tailscale is fine, see the main README.)
 - The AI works only inside `workdir`, and the commands above don't allow running programs or
   deleting outside it. Only loosen that (e.g. Gemini `--approval-mode yolo`) if you fully understand
   the risk: anyone who can talk to Jarvis could then run commands on your PC.

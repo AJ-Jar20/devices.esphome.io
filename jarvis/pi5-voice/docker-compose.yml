@@ -1,0 +1,29 @@
+# Jarvis voice server for the Raspberry Pi 5 (Raspberry Pi OS 64-bit + Docker).
+# Local speech-to-text (Whisper) and text-to-speech (Piper) for Home Assistant on the Pi 4.
+#
+#   docker compose up -d
+#
+# Then in Home Assistant (Pi 4): Settings -> Devices & services -> Add integration ->
+# Wyoming Protocol -> host = <Pi 5 IP>, port 10300 (Whisper); add again with port 10200 (Piper).
+
+services:
+  whisper:
+    image: rhasspy/wyoming-whisper:latest
+    container_name: jarvis-whisper
+    # base-int8 = fast (~1-2 s). small-int8 = more accurate, about twice as slow.
+    command: --model base-int8 --language en --beam-size 1
+    ports:
+      - "10300:10300"
+    volumes:
+      - ./data/whisper:/data
+    restart: unless-stopped
+
+  piper:
+    image: rhasspy/wyoming-piper:latest
+    container_name: jarvis-piper
+    command: --voice en_GB-alan-medium
+    ports:
+      - "10200:10200"
+    volumes:
+      - ./data/piper:/data
+    restart: unless-stopped

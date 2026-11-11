@@ -1,0 +1,33 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<!--
+  Starts the Jarvis PC agent automatically when you log in to the Mac.
+  1. Replace YOUR_USER below with your macOS user name (run `whoami`).
+  2. cp com.jarvis.pcagent.plist ~/Library/LaunchAgents/
+  3. launchctl load ~/Library/LaunchAgents/com.jarvis.pcagent.plist
+-->
+<plist version="1.0">
+<dict>
+  <key>Label</key>
+  <string>com.jarvis.pcagent</string>
+  <key>ProgramArguments</key>
+  <array>
+    <string>/opt/homebrew/bin/python3</string>
+    <string>/Users/YOUR_USER/pc-agent/jarvis_pc_agent.py</string>
+  </array>
+  <key>WorkingDirectory</key>
+  <string>/Users/YOUR_USER/pc-agent</string>
+  <key>EnvironmentVariables</key>
+  <dict>
+    <!-- So the agent can find gemini / claude installed with Homebrew + npm -->
+    <key>PATH</key>
+    <string>/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin</string>
+  </dict>
+  <key>RunAtLoad</key>
+  <true/>
+  <key>KeepAlive</key>
+  <true/>
+  <key>StandardErrorPath</key>
+  <string>/Users/YOUR_USER/pc-agent/launchd.err.log</string>
+</dict>
+</plist>
