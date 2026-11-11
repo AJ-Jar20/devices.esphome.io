@@ -1,0 +1,26 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<!--
+  Runs the wyoming-mlx voice server so Home Assistant can reach it over the network.
+  (wyoming-mlx listens on 127.0.0.1 only by default, and `brew services` keeps that default.)
+
+    brew services stop wyoming-mlx
+    cp com.jarvis.wyoming-mlx.plist ~/Library/LaunchAgents/
+    launchctl load ~/Library/LaunchAgents/com.jarvis.wyoming-mlx.plist
+-->
+<plist version="1.0">
+<dict>
+  <key>Label</key><string>com.jarvis.wyoming-mlx</string>
+  <key>ProgramArguments</key>
+  <array>
+    <string>/opt/homebrew/opt/wyoming-mlx/bin/wyoming-mlx</string>
+    <string>--stt-host</string><string>0.0.0.0</string>
+    <string>--tts-host</string><string>0.0.0.0</string>
+    <string>--kokoro-default-voice</string><string>bm_george</string>
+  </array>
+  <key>RunAtLoad</key><true/>
+  <key>KeepAlive</key><true/>
+  <key>StandardOutPath</key><string>/tmp/wyoming-mlx.log</string>
+  <key>StandardErrorPath</key><string>/tmp/wyoming-mlx.log</string>
+</dict>
+</plist>

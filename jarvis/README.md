@@ -103,6 +103,7 @@ Do these in order. Each one links to its detailed step below.
 | `sounds/timer.wav` | Timer alarm |
 | `secrets.example.yaml` | Template for your Wi-Fi details |
 | `homeassistant/jarvis_package.yaml` | The Jarvis tools for Home Assistant |
+| `mac-voice/com.jarvis.wyoming-mlx.plist` | Starts the Mac voice server at login, reachable from Home Assistant |
 | `pc-agent/` | The agent for your Mac, with its own README |
 
 ---
@@ -124,14 +125,21 @@ The Mac mini does the listening and speaking with **wyoming-mlx**. It runs Whisp
 2. Install Homebrew (https://brew.sh), then in Terminal:
    ```bash
    brew tap rnorth/tap
-   brew install wyoming-mlx
-   brew services start wyoming-mlx      # runs now and at every login
+   brew trust --formula rnorth/tap/wyoming-mlx   # newer Homebrew asks you to trust community taps
+   brew install wyoming-mlx                      # a "Failed changing dylib ID … tiktoken" warning is harmless
    ```
-   The first start downloads the models (a few GB), which takes a few minutes. Watch progress with
-   `tail -f "$(brew --prefix)/var/log/wyoming-mlx.log"`.
-   When macOS asks to allow incoming connections, click **Allow**.
+   **Don't** use `brew services start wyoming-mlx`: that keeps the voice ports on `127.0.0.1`
+   (this Mac only), so Home Assistant can't connect. Use the included LaunchAgent instead. It listens
+   on the network, uses the British `bm_george` voice, and starts at every login:
+   ```bash
+   cp mac-voice/com.jarvis.wyoming-mlx.plist ~/Library/LaunchAgents/
+   launchctl load ~/Library/LaunchAgents/com.jarvis.wyoming-mlx.plist
+   lsof -nP -iTCP:10300 -iTCP:10200 -sTCP:LISTEN   # should show *:10300 and *:10200
+   ```
+   The first start downloads the models (a few GB). Log: `/tmp/wyoming-mlx.log`.
+   When macOS asks to allow incoming connections for Python, click **Allow**.
 3. In Home Assistant on the Pi 4, go to **Settings → Devices & services → Add integration → Wyoming Protocol**:
-   - host `<mac-ip>`, port `10300` gives **speech-to-text** (Whisper)
+   - Host `<mac-ip>` (just the IP, e.g. `10.2.0.183`), Port `10300` gives **speech-to-text** (Whisper)
    - add it again with port `10200`, which gives **text-to-speech** (Kokoro)
 
 > wyoming-mlx is a young community project (first released in June 2026). If an install step has
@@ -323,7 +331,7 @@ the `config` folder with Claude Code. Back up first (**Settings → System → B
 | "Could not reach the computer" | Is the PC agent running (`launchctl list | grep jarvis`), and is the Mac's IP right? |
 | Slow answers | Check the assistant uses the Mac's speech-to-text, and use a Gemini **Flash** model. On the local brain, try a smaller model like `qwen3:4b` |
 | Local brain doesn't answer | Is the Mac awake? Does `curl http://<mac-ip>:11434` from another device say *Ollama is running*? |
-| Jarvis stopped understanding speech | Is the Mac awake? Check `brew services list` shows `wyoming-mlx` as *started*, and look at the log in step 2 |
+| Jarvis stopped understanding speech | Is the Mac awake? Run `lsof -nP -iTCP:10300 -sTCP:LISTEN`: it must show `*:10300`, not `127.0.0.1`. Log: `/tmp/wyoming-mlx.log` |
 | Choppy animation | Lower `GLOW` in `jarvis_face.h` to 0, or set the face `interval:` to 50ms |
 | Wake word too sensitive or deaf | Change `mic_gain` in `audio_dac:` (18DB-30DB) |
 
