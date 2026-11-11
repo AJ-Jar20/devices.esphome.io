@@ -2,3 +2,4 @@ config.json
 jarvis_pc_agent.log
 workspace/
 launchd.err.log
+__pycache__/
